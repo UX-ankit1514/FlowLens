@@ -59,6 +59,7 @@ export type TestDefinition = {
 
 export type SessionEventType =
   | "SESSION_CREATED"
+  | "RUN_QUEUED"
   | "PROVIDER_STARTED"
   | "LIVE_VIEW_AVAILABLE"
   | "AGENT_PROGRESS"
@@ -149,6 +150,8 @@ export type TestSession = {
   report?: UsabilityReport;
   /** Designer-recorded comparison with real research participants, per finding. */
   validations?: HumanValidation[];
+  /** One-way fingerprint of the TinyFish key that ran this test (never the key). */
+  ownerId?: string;
 };
 
 /* ------------------------------------------------------------------------ */
@@ -403,8 +406,22 @@ export type RecentSessionSummary = {
   stepCount: number;
 };
 
+/** Where a connected key comes from: this browser, an MCP client header, or the server. */
+export type KeySourceView = "browser" | "header" | "server";
+
+export type ConnectionView = {
+  connected: boolean;
+  source?: KeySourceView;
+  /** Last four characters, so the designer can recognise which key is in use. */
+  hint?: string;
+};
+
 export type AppConfigView = {
   tinyfishConfigured: boolean;
   aiInterpretationEnabled: boolean;
   aiModel?: string;
+  tinyfish: ConnectionView;
+  claude: ConnectionView;
+  /** True on a shared, hosted deployment (each designer brings their own key). */
+  hosted: boolean;
 };

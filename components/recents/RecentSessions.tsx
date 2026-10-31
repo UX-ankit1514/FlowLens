@@ -1,5 +1,6 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
 import { Badge, Box, Button, Card, CardBody, Heading, Text } from "@razorpay/blade/components";
 import {
   TASK_OUTCOME_VIEW,
@@ -9,7 +10,15 @@ import {
 } from "@/lib/presentation/labels";
 import type { RecentSessionSummary } from "@/types";
 
-export function RecentSessions({ sessions }: { sessions: RecentSessionSummary[] }) {
+export function RecentSessions({
+  sessions,
+  hosted = false,
+  connected = true,
+}: {
+  sessions: RecentSessionSummary[];
+  hosted?: boolean;
+  connected?: boolean;
+}) {
   return (
     <Box display="flex" flexDirection="column" gap="spacing.8">
       <Box display="flex" justifyContent="space-between" alignItems="flex-start" gap="spacing.5" flexWrap="wrap">
@@ -18,8 +27,9 @@ export function RecentSessions({ sessions }: { sessions: RecentSessionSummary[] 
             Recent tests
           </Heading>
           <Text size="large" color="surface.text.gray.subtle">
-            Reports saved privately on this Mac. Reopen any session to show its task, journey, evidence and full
-            report—even after restarting FlowLens.
+            {hosted
+              ? "Tests run with your TinyFish key. Reopen any of them to see its journey, evidence and full report."
+              : "Reports saved privately on this Mac. Reopen any session to show its task, journey, evidence and full report—even after restarting FlowLens."}
           </Text>
         </Box>
         <Button href="/">New test</Button>
@@ -30,10 +40,17 @@ export function RecentSessions({ sessions }: { sessions: RecentSessionSummary[] 
         borderRadius="medium"
         padding="spacing.5"
       >
-        <Text size="small" color="surface.text.gray.muted">
-          Local only · Stored in <Text as="span" weight="semibold">.flowlens-data/sessions</Text> inside this
-          project · Excluded from Git
-        </Text>
+        {hosted ? (
+          <Text size="small" color="surface.text.gray.muted">
+            From your TinyFish account · Only visible with the key that ran each test · Notes and validation marks
+            aren&apos;t stored permanently on the hosted version
+          </Text>
+        ) : (
+          <Text size="small" color="surface.text.gray.muted">
+            Local only · Stored in <Text as="span" weight="semibold">.flowlens-data/sessions</Text> inside this
+            project · Excluded from Git
+          </Text>
+        )}
       </Box>
 
       {sessions.length === 0 ? (
@@ -49,12 +66,15 @@ export function RecentSessions({ sessions }: { sessions: RecentSessionSummary[] 
           gap="spacing.4"
         >
           <Heading as="h2" size="medium">
-            No saved tests yet
+            {connected ? "No saved tests yet" : "Connect TinyFish to see your tests"}
           </Heading>
           <Box maxWidth="520px">
             <Text color="surface.text.gray.muted">
-              Your next test will appear here as soon as it starts, and its complete report will remain available
-              after the local server restarts.
+              {!connected
+                ? "Your tests are linked to your TinyFish key. Open Connections at the top of the page and add it."
+                : hosted
+                  ? "Your next test will appear here as soon as it starts."
+                  : "Your next test will appear here as soon as it starts, and its complete report will remain available after the local server restarts."}
             </Text>
           </Box>
           <Button href="/">Run your first saved test</Button>
@@ -70,7 +90,16 @@ export function RecentSessions({ sessions }: { sessions: RecentSessionSummary[] 
   );
 }
 
+const noopSubscribe = () => () => {};
+
+/** Dates are formatted in the viewer's own time zone, after hydration (the server may be in UTC). */
+function useLocalDate(iso?: string): string {
+  const hydrated = useSyncExternalStore(noopSubscribe, () => true, () => false);
+  return hydrated ? formatDateTime(iso) : "…";
+}
+
 function RecentCard({ session }: { session: RecentSessionSummary }) {
+  const runOn = useLocalDate(session.createdAt);
   const execution = sessionStatusView(session);
   const outcome = session.taskOutcome ? TASK_OUTCOME_VIEW[session.taskOutcome] : undefined;
 
@@ -97,7 +126,7 @@ function RecentCard({ session }: { session: RecentSessionSummary }) {
           </Text>
 
           <Box display="grid" gridTemplateColumns="repeat(2, minmax(0, 1fr))" gap="spacing.4">
-            <Meta label="Run on" value={formatDateTime(session.createdAt)} />
+            <Meta label="Run on" value={runOn} />
             <Meta label="Task outcome" value={outcome?.label ?? "Not available"} />
             <Meta label="Activity" value={`${session.eventCount} events`} />
             <Meta label="Evidence" value={`${session.stepCount} recorded steps`} />

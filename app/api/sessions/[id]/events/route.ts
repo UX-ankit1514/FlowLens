@@ -1,14 +1,17 @@
 import type { NextRequest } from "next/server";
+import { keysFromRequest } from "@/lib/keys";
 import { snapshotOf } from "@/lib/session-store/snapshot";
 import { sessionStore, type StoreChange } from "@/lib/session-store/store";
 import { isTerminal } from "@/lib/session-store/transitions";
-import { reconcileSessionRun } from "@/lib/tinyfish/runner";
+import { loadSession } from "@/lib/sessions/service";
+import { refreshSessionRun } from "@/lib/tinyfish/runner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const KEEPALIVE_MS = 15_000;
-const PROVIDER_RECONCILE_MS = 10_000;
+/** How often to bring the session up to date (the runner throttles provider calls). */
+const PROVIDER_REFRESH_MS = 2_500;
 
 /**
  * GET /api/sessions/:id/events — Server-Sent Events.
@@ -19,7 +22,7 @@ const PROVIDER_RECONCILE_MS = 10_000;
  */
 export async function GET(request: NextRequest, ctx: RouteContext<"/api/sessions/[id]/events">) {
   const { id } = await ctx.params;
-  const session = sessionStore.get(id);
+  const session = await loadSession(id, keysFromRequest(request));
   if (!session) return new Response("Session not found", { status: 404 });
 
   const lastEventId = request.headers.get("last-event-id") ?? request.nextUrl.searchParams.get("after");
@@ -74,9 +77,10 @@ export async function GET(request: NextRequest, ctx: RouteContext<"/api/sessions
         else sendSnapshotAndMaybeEnd();
       });
       const keepalive = setInterval(() => send(`: keepalive\n\n`), KEEPALIVE_MS);
-      // This also recovers a run whose original background task was interrupted
-      // by a development hot reload while the live session page stayed open.
-      const providerReconcile = setInterval(() => void reconcileSessionRun(id), PROVIDER_RECONCILE_MS);
+      // Follows the run through TinyFish's run record whenever this server
+      // instance isn't receiving its live stream (hosted deployments, restarts,
+      // hot reloads), and confirms the final status either way.
+      const providerReconcile = setInterval(() => void refreshSessionRun(id), PROVIDER_REFRESH_MS);
       const onAbort = () => close();
       request.signal.addEventListener("abort", onAbort);
 
@@ -88,7 +92,7 @@ export async function GET(request: NextRequest, ctx: RouteContext<"/api/sessions
       };
 
       sendSnapshotAndMaybeEnd();
-      void reconcileSessionRun(id);
+      void refreshSessionRun(id);
     },
     cancel() {
       cleanup();

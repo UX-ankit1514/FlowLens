@@ -7,7 +7,7 @@ export function SessionNotFound() {
     <Box paddingY="spacing.10" display="flex" justifyContent="center">
       <EmptyState
         title="Session not found"
-        description="Sessions are kept in memory on this computer, so they're cleared when FlowLens restarts."
+        description="FlowLens couldn't find this test. It may have been run with a different TinyFish key; connect that key to open it."
       >
         <Button href="/">Start a new test</Button>
       </EmptyState>

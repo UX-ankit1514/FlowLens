@@ -3,9 +3,10 @@ import type { CompleteEvent } from "@tiny-fish/sdk";
 import { sessionStore } from "@/lib/session-store/store";
 import { isTerminal } from "@/lib/session-store/transitions";
 import { evaluateSession, buildFallbackReport } from "@/lib/evaluator";
-import type { SessionError, StepEvidence, TestSession } from "@/types";
+import type { SessionError, StepEvidence, TestDefinition, TestSession } from "@/types";
 import { cancelRun, getRunDetails, getTinyFish, MissingApiKeyError, type RunDetails } from "./client";
 import { mapRunError, mapThrownError } from "./errors";
+import { parseFlowLensGoal } from "./import-run";
 import { buildAgentGoal } from "./instruction";
 import { AGENT_OUTPUT_SCHEMA } from "./output-schema";
 
@@ -20,18 +21,83 @@ const RECOVERY_DEADLINE_MS = (AGENT_MAX_DURATION_SECONDS + 120) * 1000;
 /** After a successful cancel call, how long to wait for the stream to confirm. */
 const CANCEL_CONFIRM_MS = 15_000;
 
-type Runtime = { abort: AbortController; cancelSent: boolean };
+/** How often a session without a live event stream re-reads TinyFish's run record. */
+const RUN_RECORD_SYNC_MS = 2_500;
+/** A live stream that has been silent this long no longer counts as live. */
+const LIVE_STREAM_FRESH_MS = 30_000;
+const MAX_REMEMBERED_KEYS = 200;
+/** Say the run is queued once it has waited this long to start. */
+const QUEUE_NOTICE_AFTER_MS = 8_000;
+const TERMINAL_RUN_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
+const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+type Runtime = { abort: AbortController; cancelSent: boolean; lastActivity: number };
+
+/** Keys a session's requests carried. Held in memory only, never persisted. */
+export type RunKeys = { tinyfish?: string; anthropic?: string };
 
 const globalRuntimes = globalThis as unknown as {
   __flowlensRuntimes?: Map<string, Runtime>;
   __flowlensFinalizations?: Map<string, Promise<void>>;
   __flowlensProviderChecks?: Map<string, Promise<boolean>>;
   __flowlensLastProviderCheck?: Map<string, number>;
+  __flowlensSessionKeys?: Map<string, RunKeys>;
+  __flowlensRecordSyncs?: Map<string, Promise<void>>;
+  __flowlensLastRecordSync?: Map<string, number>;
+  __flowlensRehydrations?: Map<string, Promise<TestSession | undefined>>;
+  __flowlensRetiredStreams?: Map<string, Set<string>>;
 };
 const runtimes: Map<string, Runtime> = (globalRuntimes.__flowlensRuntimes ??= new Map());
 const finalizations: Map<string, Promise<void>> = (globalRuntimes.__flowlensFinalizations ??= new Map());
 const providerChecks: Map<string, Promise<boolean>> = (globalRuntimes.__flowlensProviderChecks ??= new Map());
 const lastProviderCheck: Map<string, number> = (globalRuntimes.__flowlensLastProviderCheck ??= new Map());
+const sessionKeys: Map<string, RunKeys> = (globalRuntimes.__flowlensSessionKeys ??= new Map());
+const recordSyncs: Map<string, Promise<void>> = (globalRuntimes.__flowlensRecordSyncs ??= new Map());
+const lastRecordSync: Map<string, number> = (globalRuntimes.__flowlensLastRecordSync ??= new Map());
+const rehydrations: Map<string, Promise<TestSession | undefined>> = (globalRuntimes.__flowlensRehydrations ??= new Map());
+/** Live-view URLs a session has moved away from (TinyFish restarted the browser). */
+const retiredStreams: Map<string, Set<string>> = (globalRuntimes.__flowlensRetiredStreams ??= new Map());
+
+/** Remembers (in memory) the keys to use for a session's background work. */
+export function rememberKeys(id: string, keys: RunKeys): void {
+  const previous = sessionKeys.get(id) ?? {};
+  sessionKeys.delete(id);
+  sessionKeys.set(id, {
+    tinyfish: keys.tinyfish ?? previous.tinyfish,
+    anthropic: keys.anthropic ?? previous.anthropic,
+  });
+  while (sessionKeys.size > MAX_REMEMBERED_KEYS) {
+    const oldest = sessionKeys.keys().next().value;
+    if (oldest === undefined) break;
+    sessionKeys.delete(oldest);
+  }
+}
+
+function keysFor(id: string): RunKeys {
+  return sessionKeys.get(id) ?? {};
+}
+
+/**
+ * How runs are followed:
+ *  - "stream": one long-lived event stream per run (a local install);
+ *  - "poll": the run is queued and followed through TinyFish's run record, so
+ *    any server instance can pick it up (hosted, serverless deployments).
+ */
+export function runMode(): "stream" | "poll" {
+  const forced = process.env.FLOWLENS_RUN_MODE;
+  if (forced === "poll" || forced === "stream") return forced;
+  return process.env.VERCEL ? "poll" : "stream";
+}
+
+function runRequest(definition: Omit<TestDefinition, "id">) {
+  return {
+    url: definition.websiteUrl,
+    goal: buildAgentGoal({ ...definition, id: "" }),
+    output_schema: AGENT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
+    agent_config: { max_duration_seconds: AGENT_MAX_DURATION_SECONDS },
+    capture_config: { screenshots: true },
+  };
+}
 
 type Completion = {
   status: string;
@@ -41,7 +107,8 @@ type Completion = {
 };
 
 /** Starts the TinyFish run in the background. Returns immediately. */
-export function startSessionRun(sessionId: string): void {
+export function startSessionRun(sessionId: string, keys: RunKeys = {}): void {
+  rememberKeys(sessionId, keys);
   void runSession(sessionId).catch((error) => {
     console.error(`[flowlens] session ${sessionId} crashed`, error);
     failSession(sessionId, mapThrownError(error));
@@ -59,11 +126,12 @@ async function runSession(id: string): Promise<void> {
     description: `Preparing a cloud browser for ${new URL(definition.websiteUrl).hostname}`,
   });
 
-  const runtime: Runtime = { abort: new AbortController(), cancelSent: false };
+  const runtime: Runtime = { abort: new AbortController(), cancelSent: false, lastActivity: Date.now() };
   runtimes.set(id, runtime);
 
   let completion: Completion | undefined;
   let streamError: unknown;
+  let streamProgress = 0;
   let lastActivity = Date.now();
   let reconcileTimer: ReturnType<typeof setInterval> | undefined;
   const startReconciliation = () => {
@@ -77,19 +145,13 @@ async function runSession(id: string): Promise<void> {
   }, 5_000);
 
   try {
-    const stream = await getTinyFish().agent.stream(
-      {
-        url: definition.websiteUrl,
-        goal: buildAgentGoal(definition),
-        output_schema: AGENT_OUTPUT_SCHEMA as unknown as Record<string, unknown>,
-        agent_config: { max_duration_seconds: AGENT_MAX_DURATION_SECONDS },
-        capture_config: { screenshots: true },
-      },
-      { signal: runtime.abort.signal },
-    );
+    const stream = await getTinyFish(keysFor(id).tinyfish).agent.stream(runRequest(definition), {
+      signal: runtime.abort.signal,
+    });
 
     for await (const event of stream) {
       lastActivity = Date.now();
+      runtime.lastActivity = lastActivity;
       if (event.type === "STARTED") {
         onProviderStarted(id, event.run_id, event.timestamp);
         startReconciliation();
@@ -102,7 +164,11 @@ async function runSession(id: string): Promise<void> {
       } else if (event.type === "PROGRESS") {
         onProviderStarted(id, event.run_id, event.timestamp);
         startReconciliation();
-        onProgress(id, event.purpose, event.timestamp);
+        // When the stream goes quiet, open pages fill the timeline from the run
+        // record. Its steps line up one-to-one with these events, so a late
+        // event the record already supplied is skipped instead of repeated.
+        streamProgress += 1;
+        if (progressCount(id) < streamProgress) onProgress(id, event.purpose, event.timestamp);
       } else if (event.type === "COMPLETE") {
         onProviderStarted(id, event.run_id, event.timestamp);
         completion = { status: event.status, result: event.result, error: event.error, raw: event };
@@ -115,6 +181,9 @@ async function runSession(id: string): Promise<void> {
   } finally {
     clearInterval(watchdog);
     if (reconcileTimer) clearInterval(reconcileTimer);
+    // The stream is gone: let open pages follow the run record right away
+    // instead of waiting for the stream to look stale.
+    runtime.lastActivity = 0;
   }
 
   const current = sessionStore.get(id);
@@ -133,7 +202,7 @@ async function runSession(id: string): Promise<void> {
       if (streamError instanceof MissingApiKeyError) {
         failSession(id, {
           kind: "CONFIGURATION",
-          message: "TINYFISH_API_KEY is not set. Add it to .env.local and restart FlowLens.",
+          message: "No TinyFish API key is connected. Open Connections, add your TinyFish key, then run the test again.",
         });
         return;
       }
@@ -214,7 +283,7 @@ export async function reconcileSessionRun(id: string): Promise<boolean> {
 
   const check = (async () => {
     try {
-      const details = await getRunDetails(session.providerRunId!);
+      const details = await getRunDetails(session.providerRunId!, keysFor(id).tinyfish);
       if (details.status !== "COMPLETED" && details.status !== "FAILED" && details.status !== "CANCELLED") {
         return false;
       }
@@ -267,19 +336,39 @@ async function finalizeCompletion(id: string, completion: Completion): Promise<v
   }
 }
 
+/**
+ * Points the live view at the agent's browser. TinyFish sometimes restarts a
+ * stalled agent in a fresh browser mid-run; the old stream then shows "session
+ * completed" while the run goes on, so the view must follow the newest one.
+ */
 function onStreamingUrl(id: string, url: string, timestamp: string) {
   if (!/^https:\/\//i.test(url)) {
     console.warn("[flowlens] ignoring non-https streaming URL from TinyFish");
     return;
   }
+  const session = sessionStore.get(id);
+  if (!session || isTerminal(session.executionStatus) || session.executionStatus === "ANALYSING") return;
+  const previous = session.streamingUrl;
+  if (previous === url) return;
+  const retired = retiredStreams.get(id) ?? new Set<string>();
+  // A lagging run record can still name a browser that was already replaced.
+  if (retired.has(url)) return;
+  if (previous) {
+    retired.add(previous);
+    retiredStreams.set(id, retired);
+  }
+
   sessionStore.transition(id, "RUNNING", (s) => {
     s.streamingUrl = url;
     s.liveViewStatus = "AVAILABLE";
   });
   sessionStore.appendEvent(id, {
     type: "LIVE_VIEW_AVAILABLE",
-    description: "Live browser view connected",
+    description: previous
+      ? "TinyFish restarted the agent in a new browser. The live view has switched to it."
+      : "Live browser view connected",
     source: "provider",
+    tone: previous ? "notice" : undefined,
     timestamp,
   });
 }
@@ -295,24 +384,29 @@ function onProgress(id: string, purpose: string, timestamp: string) {
   });
 }
 
-/** Stream interrupted after the run started: poll the run until it's terminal. */
+/**
+ * Stream interrupted after the run started: follow the run record until it's
+ * terminal. TinyFish's live stream routinely closes partway through longer
+ * runs; the run record carries the same steps, so the designer sees no gap and
+ * the timeline doesn't get a warning for what is only a change of transport.
+ */
 async function recoverCompletion(id: string, runId: string, cancelling: boolean): Promise<Completion | undefined> {
-  sessionStore.appendEvent(id, {
-    type: "CONNECTION_INTERRUPTED",
-    description: cancelling
-      ? "Waiting for TinyFish to confirm the stop…"
-      : "Lost the live event stream from TinyFish. Checking the run status instead…",
-    tone: "notice",
-  });
+  console.info(`[flowlens] live stream for run ${runId} ended early; following the run record`);
+  if (cancelling) {
+    sessionStore.appendEvent(id, {
+      type: "CONNECTION_INTERRUPTED",
+      description: "Waiting for TinyFish to confirm the stop…",
+      tone: "notice",
+    });
+  }
   const deadline = Date.now() + RECOVERY_DEADLINE_MS;
   while (Date.now() < deadline) {
     try {
-      const details = await getRunDetails(runId);
+      const details = await getRunDetails(runId, keysFor(id).tinyfish);
+      // Keep the timeline moving even when no page is open to pull it,
+      // including the agent's last steps before the run ended.
+      applyRunRecord(id, details);
       if (details.status === "COMPLETED" || details.status === "FAILED" || details.status === "CANCELLED") {
-        sessionStore.appendEvent(id, {
-          type: "CONNECTION_RECOVERED",
-          description: "Run status retrieved from TinyFish",
-        });
         return { status: details.status, result: details.result ?? null, error: details.error, raw: details };
       }
     } catch (error) {
@@ -344,7 +438,7 @@ async function handleCompletion(id: string, completion: Completion) {
     // recorded a reason; the run record has it.
     let runError = completion.error ?? null;
     if (completion.status === "FAILED" && !runError && session.providerRunId) {
-      runError = await getRunDetails(session.providerRunId)
+      runError = await getRunDetails(session.providerRunId, keysFor(id).tinyfish)
         .then((d) => d.error ?? null)
         .catch(() => null);
     }
@@ -378,7 +472,7 @@ async function handleCompletion(id: string, completion: Completion) {
   const latest = sessionStore.get(id)!;
   let report;
   try {
-    report = await evaluateSession(latest);
+    report = await evaluateSession(latest, keysFor(id));
   } catch (error) {
     console.error(`[flowlens] evaluation failed for ${id}`, error);
     report = buildFallbackReport(latest, "The analysis step failed unexpectedly; this report lists the recorded evidence only.");
@@ -433,7 +527,7 @@ async function attachSteps(id: string) {
   let details: RunDetails | undefined;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      details = await getRunDetails(session.providerRunId);
+      details = await getRunDetails(session.providerRunId, keysFor(id).tinyfish);
       if (details.steps.length > 0) break;
     } catch (error) {
       console.warn(`[flowlens] could not fetch steps for ${session.providerRunId}`, error);
@@ -472,6 +566,194 @@ export function linkStepsToEvents(session: Pick<TestSession, "events">, steps: S
 }
 
 /* ------------------------------------------------------------------------ */
+/* Following a run through TinyFish's run record                             */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * Queues a TinyFish run and creates its session. The session id is the
+ * TinyFish run id, so any server instance can later rebuild the session from
+ * the run record with the same key. Nothing keeps running in the background.
+ */
+export async function startPolledRun(
+  definition: Omit<TestDefinition, "id">,
+  keys: RunKeys,
+  ownerId?: string,
+): Promise<TestSession> {
+  const queued = await getTinyFish(keys.tinyfish).agent.queue(runRequest(definition));
+  if (!queued.run_id) throw new RunStartError(mapRunError(queued.error ?? null));
+  const id = queued.run_id;
+  sessionStore.create(definition, { id, ownerId });
+  rememberKeys(id, keys);
+  sessionStore.transition(id, "STARTING", (s) => {
+    s.providerRunId = id;
+  });
+  sessionStore.appendEvent(id, {
+    type: "SESSION_CREATED",
+    description: `Preparing a cloud browser for ${new URL(definition.websiteUrl).hostname}`,
+  });
+  return sessionStore.get(id)!;
+}
+
+export class RunStartError extends Error {
+  constructor(readonly sessionError: SessionError) {
+    super(sessionError.message);
+    this.name = "RunStartError";
+  }
+}
+
+/** True while this server instance is receiving the run's live event stream. */
+function hasLiveStream(id: string): boolean {
+  const runtime = runtimes.get(id);
+  return Boolean(runtime && Date.now() - runtime.lastActivity < LIVE_STREAM_FRESH_MS);
+}
+
+/**
+ * Brings a session up to date: through the live stream when this instance has
+ * one, otherwise by reading TinyFish's run record.
+ */
+export async function refreshSessionRun(id: string): Promise<void> {
+  if (hasLiveStream(id)) {
+    await reconcileSessionRun(id);
+    return;
+  }
+  await syncSessionRun(id);
+}
+
+/** Applies TinyFish's run record to a session and finalizes it once the run has ended. */
+export async function syncSessionRun(id: string, prefetched?: RunDetails): Promise<void> {
+  const running = recordSyncs.get(id);
+  if (running) return running;
+  const session = sessionStore.get(id);
+  if (!session?.providerRunId || isTerminal(session.executionStatus) || session.executionStatus === "ANALYSING") {
+    return;
+  }
+  const now = Date.now();
+  if (!prefetched && now - (lastRecordSync.get(id) ?? 0) < RUN_RECORD_SYNC_MS) return;
+  lastRecordSync.set(id, now);
+
+  const job = (async () => {
+    try {
+      const details = prefetched ?? (await getRunDetails(session.providerRunId!, keysFor(id).tinyfish));
+      applyRunRecord(id, details);
+      if (TERMINAL_RUN_STATUSES.has(details.status)) {
+        await finalizeCompletion(id, completionFromRunDetails(details));
+      }
+    } catch (error) {
+      console.warn(`[flowlens] could not read the run record for session ${id}`, error);
+    }
+  })();
+  recordSyncs.set(id, job);
+  try {
+    await job;
+  } finally {
+    if (recordSyncs.get(id) === job) recordSyncs.delete(id);
+  }
+}
+
+/** Turns new parts of the run record into the same timeline events the live stream produces. */
+function applyRunRecord(id: string, details: RunDetails) {
+  const session = sessionStore.get(id);
+  if (!session || isTerminal(session.executionStatus) || session.executionStatus === "ANALYSING") return;
+  const ended = TERMINAL_RUN_STATUSES.has(details.status);
+  const now = new Date().toISOString();
+
+  // TinyFish holds a run in its queue while the account's concurrent runs are busy.
+  if (
+    details.status === "PENDING" &&
+    Date.now() - Date.parse(session.createdAt) > QUEUE_NOTICE_AFTER_MS &&
+    !session.events.some((e) => e.type === "RUN_QUEUED")
+  ) {
+    sessionStore.appendEvent(id, {
+      type: "RUN_QUEUED",
+      description: "Waiting in TinyFish's queue for a free browser. Your TinyFish plan runs a limited number of tests at once.",
+      source: "provider",
+      tone: "notice",
+    });
+  }
+
+  const started = details.started_at ?? (details.status !== "PENDING" ? now : undefined);
+  if (started && !session.startedAt) {
+    sessionStore.update(id, (s) => {
+      s.startedAt = started;
+    });
+    sessionStore.appendEvent(id, {
+      type: "PROVIDER_STARTED",
+      description: "TinyFish run started",
+      source: "provider",
+      timestamp: started,
+    });
+  }
+
+  // The run record's steps are the agent's progress updates. Once the run has
+  // ended, its last step is TinyFish's own end marker, not an agent action.
+  const steps = ended && details.steps.length > 0 ? details.steps.slice(0, -1) : details.steps;
+  const unseen = steps.slice(progressCount(id));
+
+  // Follow a browser restart too, not just the first stream. Dated with the
+  // first step it brings so the timeline's times stay in order.
+  if (!ended && details.streaming_url) {
+    onStreamingUrl(id, details.streaming_url, unseen[0]?.timestamp ?? now);
+  }
+
+  for (const step of unseen) {
+    onProgress(id, step.action?.trim() || "Agent step", step.timestamp ?? now);
+  }
+}
+
+/** Agent steps already on the session's timeline. */
+function progressCount(id: string): number {
+  return (sessionStore.get(id)?.events ?? []).filter((e) => e.type === "AGENT_PROGRESS").length;
+}
+
+/**
+ * Rebuilds a session this instance doesn't hold (another server instance ran
+ * it, or FlowLens restarted) from TinyFish's run record. Only FlowLens runs on
+ * the caller's own TinyFish account can be opened this way.
+ */
+export async function rehydrateSession(
+  id: string,
+  keys: RunKeys,
+  ownerId?: string,
+): Promise<{ session: TestSession; settled: Promise<void> } | undefined> {
+  if (!RUN_ID.test(id) || !keys.tinyfish) return undefined;
+  let pending = rehydrations.get(id);
+  if (!pending) {
+    pending = (async () => {
+      const details = await getRunDetails(id, keys.tinyfish).catch(() => undefined);
+      const definition = details ? parseFlowLensGoal(details.goal ?? "") : undefined;
+      if (!details || !definition) return undefined;
+      const existing = sessionStore.get(id);
+      if (existing) return existing;
+      sessionStore.create(definition, { id, ownerId, createdAt: details.created_at ?? undefined });
+      rememberKeys(id, keys);
+      sessionStore.transition(id, "STARTING", (s) => {
+        s.providerRunId = id;
+      });
+      sessionStore.appendEvent(id, {
+        type: "SESSION_CREATED",
+        description: `Preparing a cloud browser for ${new URL(definition.websiteUrl).hostname}`,
+        timestamp: details.created_at ?? undefined,
+      });
+      lastRecordSync.set(id, 0);
+      void syncSessionRun(id, details);
+      return sessionStore.get(id);
+    })();
+    rehydrations.set(id, pending);
+    void pending.finally(() => {
+      if (rehydrations.get(id) === pending) rehydrations.delete(id);
+    });
+  }
+  const session = await pending;
+  if (!session) return undefined;
+  return { session, settled: recordSyncs.get(id) ?? finalizations.get(id) ?? Promise.resolve() };
+}
+
+/** Resolves when the session's current sync or report generation finishes. */
+export function sessionWork(id: string): Promise<void> {
+  return recordSyncs.get(id) ?? finalizations.get(id) ?? Promise.resolve();
+}
+
+/* ------------------------------------------------------------------------ */
 /* Cancellation                                                              */
 /* ------------------------------------------------------------------------ */
 
@@ -507,7 +789,7 @@ async function sendProviderCancel(id: string): Promise<CancelOutcome> {
   if (runtime) runtime.cancelSent = true;
 
   try {
-    const result = await cancelRun(session.providerRunId);
+    const result = await cancelRun(session.providerRunId, keysFor(id).tinyfish);
     // The SSE stream normally delivers COMPLETE(CANCELLED) right after this.
     // If it doesn't, stop listening and let recovery confirm via the REST API.
     setTimeout(() => {

@@ -86,8 +86,8 @@ export function TestReview({ website, persona, goal, criteria, isValid, missing,
                 <Text size="small" color="surface.text.gray.muted">
                   Report:{" "}
                   {config.aiInterpretationEnabled
-                    ? "evidence summary with AI interpretation."
-                    : "evidence summary (no AI key configured)."}
+                    ? "reasoning-model analysis with evidence checks."
+                    : "rule-based analysis. Connect Claude for reasoning-model analysis."}
                 </Text>
               ) : null}
             </Box>

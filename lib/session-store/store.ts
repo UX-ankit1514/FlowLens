@@ -99,18 +99,23 @@ export class SessionStore {
     this.evictOldest();
   }
 
-  create(definition: Omit<TestDefinition, "id">): TestSession {
-    const id = randomUUID();
+  create(
+    definition: Omit<TestDefinition, "id">,
+    options: { id?: string; ownerId?: string; createdAt?: string } = {},
+  ): TestSession {
+    const id = options.id ?? randomUUID();
+    if (!SAFE_SESSION_ID.test(id)) throw new Error("Invalid session id");
     const session: TestSession = {
       id,
       definition: { ...definition, id },
       executionStatus: "CREATED",
-      createdAt: new Date().toISOString(),
+      createdAt: options.createdAt ?? new Date().toISOString(),
       events: [],
       liveViewStatus: "PENDING",
       steps: [],
       notes: [],
       cancelRequested: false,
+      ...(options.ownerId ? { ownerId: options.ownerId } : {}),
     };
     this.sessions.set(id, session);
     this.persist(session);
@@ -281,7 +286,9 @@ const sharedStore =
   previousStore && typeof previousStore.enablePersistence === "function" ? previousStore : new SessionStore();
 globalStore.__flowlensSessionStore = sharedStore;
 
-if (process.env.NODE_ENV !== "test") sharedStore.enablePersistence(LOCAL_HISTORY_DIRECTORY);
+// Hosted deployments (Vercel) have a read-only file system: sessions live in
+// memory there and are rebuilt from TinyFish's run record when needed.
+if (process.env.NODE_ENV !== "test" && !process.env.VERCEL) sharedStore.enablePersistence(LOCAL_HISTORY_DIRECTORY);
 for (const session of previousSessions) sharedStore.restore(session);
 
 export const sessionStore: SessionStore = sharedStore;

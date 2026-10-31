@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { isSameOriginOrNonBrowser, keysFromRequest } from "@/lib/keys";
 import { sessionStore } from "@/lib/session-store/store";
+import { loadSession } from "@/lib/sessions/service";
 import type { HumanValidation } from "@/types";
 
 export const runtime = "nodejs";
@@ -19,7 +21,7 @@ const validationSchema = z.object({
  */
 export async function POST(request: NextRequest, ctx: RouteContext<"/api/sessions/[id]/validation">) {
   const { id } = await ctx.params;
-  const session = sessionStore.get(id);
+  const session = isSameOriginOrNonBrowser(request) ? await loadSession(id, keysFromRequest(request)) : undefined;
   if (!session?.report) {
     return NextResponse.json({ error: "Session or report not found." }, { status: 404 });
   }

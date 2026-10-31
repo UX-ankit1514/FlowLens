@@ -1,16 +1,18 @@
+import { cookies, headers } from "next/headers";
 import { AppShell } from "@/components/ui/AppShell";
 import { RecentSessions } from "@/components/recents/RecentSessions";
-import { recentSummaryOf } from "@/lib/session-store/snapshot";
-import { sessionStore } from "@/lib/session-store/store";
+import { isHosted, resolveKeys } from "@/lib/keys";
+import { listRecentSessions } from "@/lib/sessions/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export default function RecentsPage() {
-  const sessions = sessionStore.listRecent().map(recentSummaryOf);
+export default async function RecentsPage() {
+  const keys = resolveKeys(await headers(), await cookies());
+  const sessions = await listRecentSessions(keys);
   return (
     <AppShell>
-      <RecentSessions sessions={sessions} />
+      <RecentSessions sessions={sessions} hosted={isHosted()} connected={Boolean(keys.tinyfish)} />
     </AppShell>
   );
 }

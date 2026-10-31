@@ -1,5 +1,6 @@
 import type { NextRequest } from "next/server";
-import { sessionStore } from "@/lib/session-store/store";
+import { keysFromRequest } from "@/lib/keys";
+import { loadSession } from "@/lib/sessions/service";
 import { fetchStepScreenshot } from "@/lib/tinyfish/client";
 
 export const runtime = "nodejs";
@@ -10,15 +11,16 @@ export const dynamic = "force-dynamic";
  * for a step of this session's run. Proxied so the API key stays server-side.
  * Only steps that belong to this session's run can be requested.
  */
-export async function GET(_request: NextRequest, ctx: RouteContext<"/api/sessions/[id]/evidence/[stepId]">) {
+export async function GET(request: NextRequest, ctx: RouteContext<"/api/sessions/[id]/evidence/[stepId]">) {
   const { id, stepId } = await ctx.params;
-  const session = sessionStore.get(id);
+  const keys = keysFromRequest(request);
+  const session = await loadSession(id, keys);
   const step = session?.steps.find((s) => s.stepId === stepId);
   if (!session?.providerRunId || !step?.hasScreenshot) {
     return new Response("Screenshot not available", { status: 404 });
   }
 
-  const upstream = await fetchStepScreenshot(session.providerRunId, stepId).catch(() => null);
+  const upstream = await fetchStepScreenshot(session.providerRunId, stepId, keys.tinyfish).catch(() => null);
   if (upstream?.status === 404) {
     return new Response("TinyFish has no stored screenshot for this step", { status: 404 });
   }

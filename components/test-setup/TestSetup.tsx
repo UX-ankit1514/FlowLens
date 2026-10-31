@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useConnections } from "@/components/connections/ConnectionsContext";
 import { useRouter } from "next/navigation";
 import {
   Alert,
@@ -21,7 +22,7 @@ import {
   type FieldErrors,
 } from "@/lib/schemas/test-input";
 import { normalizeWebsiteUrl } from "@/lib/security/url";
-import type { AppConfigView, TestSession } from "@/types";
+import type { TestSession } from "@/types";
 import { TestReview } from "./TestReview";
 
 type FormState = {
@@ -73,16 +74,9 @@ export function TestSetup({ fromSessionId }: { fromSessionId?: string }) {
   const [serverErrors, setServerErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
-  const [config, setConfig] = useState<AppConfigView>();
+  const { config, openConnections } = useConnections();
   const [featureOpen, setFeatureOpen] = useState(false);
   const [prefillNote, setPrefillNote] = useState<string>();
-
-  useEffect(() => {
-    fetch("/api/config", { cache: "no-store" })
-      .then((r) => r.json())
-      .then(setConfig)
-      .catch(() => undefined);
-  }, []);
 
   // "Run another test": start from a previous session's definition.
   useEffect(() => {
@@ -176,11 +170,12 @@ export function TestSetup({ fromSessionId }: { fromSessionId?: string }) {
       {config && !config.tinyfishConfigured ? (
         <Box marginBottom="spacing.7">
           <Alert
-            color="negative"
+            color="notice"
             isDismissible={false}
             isFullWidth
-            title="TinyFish isn't connected"
-            description="Add your TINYFISH_API_KEY to the .env.local file in the flowlens folder, then restart FlowLens. Tests can't run without it."
+            title="Connect TinyFish to run tests"
+            description="FlowLens runs a real browser agent on your own TinyFish account. Add your API key once; it's kept securely in this browser."
+            actions={{ primary: { text: "Connect TinyFish", onClick: openConnections } }}
           />
         </Box>
       ) : null}

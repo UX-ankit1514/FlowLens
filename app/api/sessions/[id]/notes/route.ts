@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { isSameOriginOrNonBrowser, keysFromRequest } from "@/lib/keys";
 import { sessionStore } from "@/lib/session-store/store";
+import { loadSession } from "@/lib/sessions/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +14,7 @@ const noteSchema = z.object({
 /** POST /api/sessions/:id/notes — a designer-authored observation. */
 export async function POST(request: NextRequest, ctx: RouteContext<"/api/sessions/[id]/notes">) {
   const { id } = await ctx.params;
-  if (!sessionStore.get(id)) {
+  if (!isSameOriginOrNonBrowser(request) || !(await loadSession(id, keysFromRequest(request)))) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
   }
   const parsed = noteSchema.safeParse(await request.json().catch(() => null));

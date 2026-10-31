@@ -17,7 +17,8 @@ import type {
 import { deriveTaskOutcome, getObservations, orderFindings } from "./evidence-summary";
 
 /**
- * Optional reasoning-model layer (enabled when ANTHROPIC_API_KEY is set).
+ * Optional reasoning-model layer (enabled when a Claude API key is connected
+ * in the app, sent by an MCP client, or set as ANTHROPIC_API_KEY).
  *
  * It reads the recorded journey trace, the agent's report, the rule-based
  * checks and the final step screenshots, and returns:
@@ -36,8 +37,11 @@ export const AI_MODEL = "claude-opus-5-5";
 const MAX_SCREENSHOTS = 5;
 const MAX_SCREENSHOT_BYTES = 3_500_000;
 
-export function isAiConfigured(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY?.trim());
+/** Keys the evaluator may use. Both fall back to the server's environment. */
+export type EvaluatorKeys = { anthropic?: string; tinyfish?: string };
+
+export function isAiConfigured(keys: EvaluatorKeys = {}): boolean {
+  return Boolean(keys.anthropic?.trim() || process.env.ANTHROPIC_API_KEY?.trim());
 }
 
 const PATTERN_KINDS = [
@@ -111,7 +115,7 @@ Rules:
 type ScreenshotBlock = { ref: string; purpose: string; mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif"; data: string };
 
 /** The last few non-technical step screenshots: where the outcome is usually visible. */
-async function loadScreenshots(session: TestSession, steps: JourneyStep[]): Promise<ScreenshotBlock[]> {
+async function loadScreenshots(session: TestSession, steps: JourneyStep[], tinyfishKey?: string): Promise<ScreenshotBlock[]> {
   if (!session.providerRunId) return [];
   const picks = steps
     .filter((s) => s.hasScreenshot && s.stepId && !s.terminal && !s.flags.some((f) => f.kind === "TECHNICAL"))
@@ -119,7 +123,7 @@ async function loadScreenshots(session: TestSession, steps: JourneyStep[]): Prom
   const loaded = await Promise.all(
     picks.map(async (step): Promise<ScreenshotBlock | undefined> => {
       try {
-        const res = await fetchStepScreenshot(session.providerRunId!, step.stepId!);
+        const res = await fetchStepScreenshot(session.providerRunId!, step.stepId!, tinyfishKey);
         if (!res.ok) return undefined;
         const type = (res.headers.get("content-type") ?? "").split(";")[0].trim();
         if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(type)) return undefined;
@@ -134,11 +138,19 @@ async function loadScreenshots(session: TestSession, steps: JourneyStep[]): Prom
   return loaded.filter((s): s is ScreenshotBlock => Boolean(s));
 }
 
-export async function interpretWithAi(session: TestSession, base: UsabilityReport): Promise<UsabilityReport> {
-  const client = new Anthropic({ timeout: 240_000, maxRetries: 1 });
+export async function interpretWithAi(
+  session: TestSession,
+  base: UsabilityReport,
+  keys: EvaluatorKeys = {},
+): Promise<UsabilityReport> {
+  const client = new Anthropic({
+    ...(keys.anthropic?.trim() ? { apiKey: keys.anthropic.trim() } : {}),
+    timeout: 240_000,
+    maxRetries: 1,
+  });
   const { data: observations } = getObservations(session);
   const def = session.definition;
-  const screenshots = await loadScreenshots(session, base.journey.steps);
+  const screenshots = await loadScreenshots(session, base.journey.steps, keys.tinyfish);
 
   const payload = {
     test: {

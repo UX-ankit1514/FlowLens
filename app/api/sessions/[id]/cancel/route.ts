@@ -1,14 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { sessionStore } from "@/lib/session-store/store";
+import { isSameOriginOrNonBrowser, keysFromRequest } from "@/lib/keys";
+import { loadSession } from "@/lib/sessions/service";
 import { requestCancel } from "@/lib/tinyfish/runner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** POST /api/sessions/:id/cancel — cancels the underlying TinyFish run. */
-export async function POST(_request: NextRequest, ctx: RouteContext<"/api/sessions/[id]/cancel">) {
+export async function POST(request: NextRequest, ctx: RouteContext<"/api/sessions/[id]/cancel">) {
   const { id } = await ctx.params;
-  if (!sessionStore.get(id)) {
+  if (!isSameOriginOrNonBrowser(request)) {
+    return NextResponse.json({ error: "Requests from other websites aren't allowed." }, { status: 403 });
+  }
+  if (!(await loadSession(id, keysFromRequest(request)))) {
     return NextResponse.json({ error: "Session not found." }, { status: 404 });
   }
   const outcome = await requestCancel(id);

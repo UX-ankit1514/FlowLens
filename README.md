@@ -25,9 +25,39 @@ You need [Node.js](https://nodejs.org) 22 or newer.
 To check the TinyFish connection on its own: `npm run check:tinyfish` (runs one small, real
 automation on example.com and prints every event).
 
+### Connect your keys in the app
+
+Open **Connections** in the header and paste your TinyFish API key (and, optionally, your
+Claude API key). FlowLens checks each key with its provider and keeps it in a secure,
+HttpOnly cookie in that browser only — it's never shown again or saved with your tests. This is
+how the hosted version works: each designer brings their own key and sees only their own tests.
+A key in `.env.local` still works for a local install.
+
+### Use FlowLens from Claude Code or Codex
+
+FlowLens is also an MCP server at `/api/mcp` (Streamable HTTP). Your coding agent can start a
+test, follow it, and read the full report. The exact commands, with your FlowLens address filled
+in, are in **Connections**. For example:
+
+```sh
+claude mcp add --transport http --scope user flowlens https://YOUR-FLOWLENS/api/mcp \
+  --header "X-TinyFish-Api-Key: YOUR_TINYFISH_API_KEY"
+```
+
+```toml
+# ~/.codex/config.toml
+[mcp_servers.flowlens]
+url = "https://YOUR-FLOWLENS/api/mcp"
+http_headers = { "X-TinyFish-Api-Key" = "YOUR_TINYFISH_API_KEY" }
+tool_timeout_sec = 120
+```
+
+Tools: `start_usability_test`, `get_test_status`, `get_test_report`, `list_tests`, `stop_test`.
+Add an `X-Anthropic-Api-Key` header to include the Claude analysis.
+
 ### Optional: AI interpretation
 
-Add `ANTHROPIC_API_KEY` to `.env.local` to have Claude interpret the evidence into findings,
+Connect a Claude key in **Connections** (or add `ANTHROPIC_API_KEY` to `.env.local`) to have Claude interpret the evidence into findings,
 hypotheses and persona-specific relevance. Without it, reports are an **evidence summary**:
 findings are assembled by fixed rules from what the agent reported, and every report says so.
 Either way, the task outcome and checkpoint results come only from observed data; the AI
@@ -109,6 +139,12 @@ npm run e2e:flow -- <config.json> <out-dir>   # full real run in Chrome (uses Ti
 - **Storage is local to this Mac.** Sessions and reports are saved as private JSON files under
   `.flowlens-data/sessions` inside the project. The folder is excluded from Git. Use **Recents**
   in the header to reopen a complete overview after restarting FlowLens.
+- **Hosted (Vercel) version.** The file system there is read-only, so FlowLens keeps no files:
+  a test's id is its TinyFish run id, and any server instance can rebuild the session and its
+  report from TinyFish's run record with the visitor's key. Recents lists the FlowLens runs on
+  the visitor's TinyFish account. Designer notes and validation marks aren't stored permanently
+  there yet. Don't set `TINYFISH_API_KEY` on a public deployment unless you want every visitor
+  to use your balance.
 - **TinyFish allows 2 runs at once** on this plan. A third gets a clear "TinyFish is busy" error.
 - **Each run is capped at 8 minutes** (`AGENT_MAX_DURATION_SECONDS` in `lib/tinyfish/runner.ts`).
 - **TinyFish's safety filter** occasionally declines a goal. FlowLens shows TinyFish's reason
@@ -118,5 +154,5 @@ npm run e2e:flow -- <config.json> <out-dir>   # full real run in Chrome (uses Ti
   can't serve; the report then says "Screenshot not available" rather than substituting one.
 - **Device emulation**: runs use a desktop browser. Device preferences in a persona are noted
   as a limitation in the report.
-- **Not for production as-is**: add authentication, persistent storage and retention policies
-  before deploying anywhere other than your own computer.
+- **Before wider production use**: add sign-in, persistent storage for notes and validation
+  marks, and retention policies.

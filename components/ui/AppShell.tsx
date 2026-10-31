@@ -5,6 +5,7 @@ import NextLink from "next/link";
 import styled from "styled-components";
 import { Box, Text } from "@razorpay/blade/components";
 import type { Theme } from "@razorpay/blade/components";
+import { useConnections } from "@/components/connections/ConnectionsContext";
 
 const Bar = styled.header(
   ({ theme }: { theme: Theme }) => `
@@ -46,6 +47,52 @@ const NavLink = styled(NextLink)(
   }
 `,
 );
+
+const NavButton = styled.button(
+  ({ theme }: { theme: Theme }) => `
+  display: inline-flex;
+  align-items: center;
+  gap: ${theme.spacing[2]}px;
+  color: ${theme.colors.interactive.text.primary.normal};
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: ${theme.spacing[2]}px ${theme.spacing[3]}px;
+  border-radius: ${theme.border.radius.small}px;
+  &:hover { background: ${theme.colors.interactive.background.primary.faded}; }
+  &:focus-visible {
+    outline: 2px solid ${theme.colors.interactive.border.primary.default};
+    outline-offset: 2px;
+  }
+`,
+);
+
+const Dot = styled.span<{ $on?: boolean }>(
+  ({ theme, $on }: { theme: Theme; $on?: boolean }) => `
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: ${$on ? theme.colors.feedback.background.positive.intense : theme.colors.feedback.background.notice.intense};
+`,
+);
+
+function ConnectionsButton() {
+  const { config, openConnections } = useConnections();
+  const connected = config?.tinyfish.connected;
+  return (
+    <NavButton
+      type="button"
+      onClick={openConnections}
+      aria-label={config ? `Connections — TinyFish ${connected ? "connected" : "not connected"}` : "Connections"}
+    >
+      {config ? <Dot $on={connected} aria-hidden /> : null}
+      Connections
+    </NavButton>
+  );
+}
 
 /** The FlowLens mark: a lens (ring) with a focal point. */
 const Mark = styled.span(
@@ -101,6 +148,7 @@ export function AppShell({
           </BrandLink>
           <Box display="flex" alignItems="center" gap="spacing.3">
             <NavLink href="/recents">Recents</NavLink>
+            <ConnectionsButton />
             {trailing}
           </Box>
         </Box>

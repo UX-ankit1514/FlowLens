@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import { useServerInsertedHTML } from "next/navigation";
 import { ServerStyleSheet, StyleSheetManager } from "styled-components";
 import { BladeProvider } from "@razorpay/blade/components";
+import { ConnectionsProvider } from "@/components/connections/ConnectionsContext";
 import { flowlensTheme } from "@/lib/design/theme";
 
 /** Collects styled-components CSS during SSR so Blade renders styled on first paint. */
@@ -24,7 +25,7 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <StyledComponentsRegistry>
       <BladeProvider themeTokens={flowlensTheme} colorScheme="light">
-        {children}
+        <ConnectionsProvider>{children}</ConnectionsProvider>
       </BladeProvider>
     </StyledComponentsRegistry>
   );
