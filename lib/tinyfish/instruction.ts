@@ -47,8 +47,8 @@ WHAT TO RETURN
 - task_outcome: completed, partially_completed, blocked, or not_completed.
 - outcome_summary: two or three factual sentences on what happened.
 - final_answer: what you found that answers the goal (for example the specific option, values and page), or null.
-- checkpoints: one entry per success criterion, in the same order, with status passed / failed / blocked / not_verified and the concrete observation (labels, values, page) behind that status.
-- actions: the significant steps you took, in order, with the page URL and whether each succeeded.
-- obstacles: anything that stopped or complicated progress — what happened, on which page, and whether it blocked progress toward the goal.
+- checkpoints: one entry per success criterion, in the same order, with status passed / failed / blocked / not_verified and the concrete observation (labels, values, page) behind that status. Mark a criterion passed only if you saw it met on the website yourself.
+- actions: the steps you took, in order, including repeated attempts and going back. For each: what you did (for example: clicked the "Plan with AI" link), why you did it (purpose), the page URL, and whether it succeeded.
+- obstacles: anything that stopped or complicated progress. For each: a short summary of at most eight words, what happened, what you expected to find or do, where you looked, the page, and whether it blocked progress toward the goal. Use captcha_or_bot_protection for CAPTCHAs, bot checks and access restrictions, and automation_environment for browser, proxy, network or tool problems that a regular visitor would not have.
 - urls_visited: the page URLs you visited, in order.`;
 }

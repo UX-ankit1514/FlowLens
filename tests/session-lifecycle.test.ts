@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { SessionStore } from "@/lib/session-store/store";
 import { canTransition, InvalidTransitionError, isTerminal } from "@/lib/session-store/transitions";
 import { linkStepsToEvents } from "@/lib/tinyfish/runner";
@@ -60,6 +63,30 @@ describe("session transitions", () => {
     const store = new SessionStore();
     const s = store.create(definition);
     expect(store.addNote(s.id, "The cookie banner covered the search box").ref).toBe("N1");
+  });
+});
+
+describe("local session history", () => {
+  it("restores sessions and notes from JSON after a server restart", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "flowlens-history-"));
+    try {
+      const first = new SessionStore({ persistenceDir: directory });
+      const session = first.create(definition);
+      first.transition(session.id, "STARTING");
+      first.transition(session.id, "RUNNING");
+      first.appendEvent(session.id, { type: "AGENT_PROGRESS", description: "Opened search", source: "provider" });
+      first.addNote(session.id, "Keep this note after restart");
+
+      const afterRestart = new SessionStore({ persistenceDir: directory });
+      expect(afterRestart.get(session.id)).toMatchObject({
+        id: session.id,
+        executionStatus: "RUNNING",
+        notes: [{ ref: "N1", text: "Keep this note after restart" }],
+      });
+      expect(afterRestart.listRecent().map((item) => item.id)).toContain(session.id);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 });
 

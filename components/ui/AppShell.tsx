@@ -31,6 +31,22 @@ const BrandLink = styled(NextLink)(
 `,
 );
 
+const NavLink = styled(NextLink)(
+  ({ theme }: { theme: Theme }) => `
+  color: ${theme.colors.interactive.text.primary.normal};
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  padding: ${theme.spacing[2]}px ${theme.spacing[3]}px;
+  border-radius: ${theme.border.radius.small}px;
+  &:hover { background: ${theme.colors.interactive.background.primary.faded}; }
+  &:focus-visible {
+    outline: 2px solid ${theme.colors.interactive.border.primary.default};
+    outline-offset: 2px;
+  }
+`,
+);
+
 /** The FlowLens mark: a lens (ring) with a focal point. */
 const Mark = styled.span(
   ({ theme }: { theme: Theme }) => `
@@ -83,7 +99,10 @@ export function AppShell({
               </Text>
             </Box>
           </BrandLink>
-          {trailing}
+          <Box display="flex" alignItems="center" gap="spacing.3">
+            <NavLink href="/recents">Recents</NavLink>
+            {trailing}
+          </Box>
         </Box>
       </Bar>
       <Box as="main" maxWidth={maxWidth} marginX="auto" paddingX={{ base: "spacing.5", m: "spacing.8" }} paddingY="spacing.8">

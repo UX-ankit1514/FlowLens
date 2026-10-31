@@ -76,9 +76,10 @@ app/                     pages (setup, live session, report) and API routes
 components/test-setup/   Screen 1 — form and review panel
 components/live-session/ Screen 2 — browser preview, activity timeline, notes
 components/ux-report/    Screen 3 — report sections, finding cards, evidence
+components/recents/      Mac-local saved-session history
 lib/tinyfish/            SDK client, agent instruction, output schema, runner, errors
 lib/evaluator/           evidence summary (rules) and optional Claude interpretation
-lib/session-store/       in-memory sessions, lifecycle transitions, SSE snapshots
+lib/session-store/       local JSON persistence, lifecycle transitions, SSE snapshots
 lib/security/            URL validation and DNS-based SSRF protection
 lib/design/theme.ts      Blade theme (brand colour, Inter)
 tests/                   unit tests (Vitest) and end-to-end scripts (Playwright + Chrome)
@@ -95,7 +96,7 @@ of also adding Tailwind or Lucide.
 ## Testing
 
 ```
-npm test                 # 67 unit tests: URL security, validation, schema rules, lifecycle,
+npm test                 # 69 unit tests: URL security, validation, schema rules, lifecycle,
                          # outcome logic, evidence-backed findings, error mapping, AI guardrails
 npm run typecheck
 npm run lint
@@ -105,8 +106,9 @@ npm run e2e:flow -- <config.json> <out-dir>   # full real run in Chrome (uses Ti
 
 ## Things to know
 
-- **Storage is in memory.** Sessions disappear when FlowLens restarts. This is deliberate for
-  the local MVP; the session store is the seam for a database later.
+- **Storage is local to this Mac.** Sessions and reports are saved as private JSON files under
+  `.flowlens-data/sessions` inside the project. The folder is excluded from Git. Use **Recents**
+  in the header to reopen a complete overview after restarting FlowLens.
 - **TinyFish allows 2 runs at once** on this plan. A third gets a clear "TinyFish is busy" error.
 - **Each run is capped at 8 minutes** (`AGENT_MAX_DURATION_SECONDS` in `lib/tinyfish/runner.ts`).
 - **TinyFish's safety filter** occasionally declines a goal. FlowLens shows TinyFish's reason

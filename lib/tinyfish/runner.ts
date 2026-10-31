@@ -13,6 +13,8 @@ import { AGENT_OUTPUT_SCHEMA } from "./output-schema";
 export const AGENT_MAX_DURATION_SECONDS = 480;
 /** No SSE traffic (incl. heartbeats) for this long → treat the stream as interrupted. */
 const STREAM_INACTIVITY_MS = 90_000;
+/** Periodically verify the provider status even while SSE heartbeats continue. */
+const PROVIDER_RECONCILE_MS = 10_000;
 const RECOVERY_POLL_MS = 4_000;
 const RECOVERY_DEADLINE_MS = (AGENT_MAX_DURATION_SECONDS + 120) * 1000;
 /** After a successful cancel call, how long to wait for the stream to confirm. */
@@ -20,8 +22,16 @@ const CANCEL_CONFIRM_MS = 15_000;
 
 type Runtime = { abort: AbortController; cancelSent: boolean };
 
-const globalRuntimes = globalThis as unknown as { __flowlensRuntimes?: Map<string, Runtime> };
+const globalRuntimes = globalThis as unknown as {
+  __flowlensRuntimes?: Map<string, Runtime>;
+  __flowlensFinalizations?: Map<string, Promise<void>>;
+  __flowlensProviderChecks?: Map<string, Promise<boolean>>;
+  __flowlensLastProviderCheck?: Map<string, number>;
+};
 const runtimes: Map<string, Runtime> = (globalRuntimes.__flowlensRuntimes ??= new Map());
+const finalizations: Map<string, Promise<void>> = (globalRuntimes.__flowlensFinalizations ??= new Map());
+const providerChecks: Map<string, Promise<boolean>> = (globalRuntimes.__flowlensProviderChecks ??= new Map());
+const lastProviderCheck: Map<string, number> = (globalRuntimes.__flowlensLastProviderCheck ??= new Map());
 
 type Completion = {
   status: string;
@@ -55,6 +65,11 @@ async function runSession(id: string): Promise<void> {
   let completion: Completion | undefined;
   let streamError: unknown;
   let lastActivity = Date.now();
+  let reconcileTimer: ReturnType<typeof setInterval> | undefined;
+  const startReconciliation = () => {
+    if (reconcileTimer) return;
+    reconcileTimer = setInterval(() => void reconcileSessionRun(id), PROVIDER_RECONCILE_MS);
+  };
   const watchdog = setInterval(() => {
     if (Date.now() - lastActivity > STREAM_INACTIVITY_MS) {
       runtime.abort.abort(new Error("No events from TinyFish for 90 seconds"));
@@ -77,11 +92,19 @@ async function runSession(id: string): Promise<void> {
       lastActivity = Date.now();
       if (event.type === "STARTED") {
         onProviderStarted(id, event.run_id, event.timestamp);
+        startReconciliation();
       } else if (event.type === "STREAMING_URL") {
+        // STARTED can be lost on a reconnect. Every run-scoped event is also
+        // enough to recover the provider id and begin status reconciliation.
+        onProviderStarted(id, event.run_id, event.timestamp);
+        startReconciliation();
         onStreamingUrl(id, event.streaming_url, event.timestamp);
       } else if (event.type === "PROGRESS") {
+        onProviderStarted(id, event.run_id, event.timestamp);
+        startReconciliation();
         onProgress(id, event.purpose, event.timestamp);
       } else if (event.type === "COMPLETE") {
+        onProviderStarted(id, event.run_id, event.timestamp);
         completion = { status: event.status, result: event.result, error: event.error, raw: event };
         break;
       }
@@ -91,10 +114,14 @@ async function runSession(id: string): Promise<void> {
     streamError = error;
   } finally {
     clearInterval(watchdog);
+    if (reconcileTimer) clearInterval(reconcileTimer);
   }
 
   const current = sessionStore.get(id);
-  if (!current || isTerminal(current.executionStatus)) return;
+  if (!current || isTerminal(current.executionStatus) || current.executionStatus === "ANALYSING") {
+    runtimes.delete(id);
+    return;
+  }
 
   if (!completion) {
     if (!current.providerRunId) {
@@ -126,10 +153,17 @@ async function runSession(id: string): Promise<void> {
   }
 
   runtimes.delete(id);
-  await handleCompletion(id, completion);
+  await finalizeCompletion(id, completion);
 }
 
 function onProviderStarted(id: string, runId: string, timestamp: string) {
+  const current = sessionStore.get(id);
+  if (!current || current.providerRunId) {
+    if (current?.providerRunId && current.providerRunId !== runId) {
+      console.warn(`[flowlens] session ${id} received events for a second TinyFish run`);
+    }
+    return;
+  }
   sessionStore.update(id, (s) => {
     s.providerRunId = runId;
     s.startedAt = timestamp;
@@ -142,6 +176,95 @@ function onProviderStarted(id: string, runId: string, timestamp: string) {
   });
   const session = sessionStore.get(id);
   if (session?.cancelRequested) void sendProviderCancel(id);
+}
+
+function completionFromRunDetails(details: RunDetails): Completion {
+  return {
+    status: details.status,
+    result: details.result ?? null,
+    error: details.error,
+    raw: details,
+  };
+}
+
+/**
+ * Reconciles an active FlowLens session with TinyFish's durable run record.
+ *
+ * This intentionally runs alongside the live event stream: a provider can
+ * keep sending heartbeats after its browser has ended while the final COMPLETE
+ * event was dropped. The check is globally de-duplicated and throttled so the
+ * runner and a connected live page can both use it safely.
+ */
+export async function reconcileSessionRun(id: string): Promise<boolean> {
+  const existing = providerChecks.get(id);
+  if (existing) return existing;
+
+  const session = sessionStore.get(id);
+  if (
+    !session?.providerRunId ||
+    isTerminal(session.executionStatus) ||
+    session.executionStatus === "ANALYSING"
+  ) {
+    return false;
+  }
+
+  const now = Date.now();
+  if (now - (lastProviderCheck.get(id) ?? 0) < PROVIDER_RECONCILE_MS) return false;
+  lastProviderCheck.set(id, now);
+
+  const check = (async () => {
+    try {
+      const details = await getRunDetails(session.providerRunId!);
+      if (details.status !== "COMPLETED" && details.status !== "FAILED" && details.status !== "CANCELLED") {
+        return false;
+      }
+
+      // Start finalization first. finalizeCompletion claims the session and
+      // handleCompletion transitions synchronously to ANALYSING before the
+      // stream is aborted, so recovery cannot finalize the run a second time.
+      const finalization = finalizeCompletion(id, completionFromRunDetails(details));
+      runtimes.get(id)?.abort.abort(new Error("TinyFish terminal status confirmed by reconciliation"));
+      await finalization;
+      return true;
+    } catch (error) {
+      console.warn(`[flowlens] could not reconcile session ${id} with TinyFish`, error);
+      return false;
+    }
+  })();
+
+  providerChecks.set(id, check);
+  try {
+    return await check;
+  } finally {
+    if (providerChecks.get(id) === check) providerChecks.delete(id);
+  }
+}
+
+/** Ensures completion and report generation happen once per session. */
+async function finalizeCompletion(id: string, completion: Completion): Promise<void> {
+  const existing = finalizations.get(id);
+  if (existing) return existing;
+  const session = sessionStore.get(id);
+  if (!session || isTerminal(session.executionStatus) || session.executionStatus === "ANALYSING") return;
+
+  let resolveJob!: () => void;
+  let rejectJob!: (reason: unknown) => void;
+  const job = new Promise<void>((resolve, reject) => {
+    resolveJob = resolve;
+    rejectJob = reject;
+  });
+  finalizations.set(id, job);
+  // Calling an async function runs synchronously until its first await. The
+  // finalization claim is therefore visible before handleCompletion changes
+  // the session to ANALYSING, and both are visible before callers can abort
+  // the event stream.
+  void handleCompletion(id, completion).then(resolveJob, rejectJob);
+  try {
+    await job;
+  } finally {
+    if (finalizations.get(id) === job) finalizations.delete(id);
+    lastProviderCheck.delete(id);
+  }
 }
 
 function onStreamingUrl(id: string, url: string, timestamp: string) {
@@ -285,7 +408,7 @@ function finishCancelled(id: string, completion: Completion) {
   sessionStore.transition(id, "CANCELLED", (s) => {
     s.liveViewStatus = s.streamingUrl ? "ENDED" : s.liveViewStatus;
     s.finishedAt = new Date().toISOString();
-    s.taskOutcome = "INCONCLUSIVE";
+    s.taskOutcome = "NOT_VERIFIED";
     s.report = buildFallbackReport(s, "The designer stopped this session before the agent finished.");
   });
 }
@@ -297,7 +420,7 @@ function failSession(id: string, error: SessionError) {
     s.error = error;
     s.liveViewStatus = s.streamingUrl ? "ENDED" : s.liveViewStatus;
     s.finishedAt = new Date().toISOString();
-    s.taskOutcome = "INCONCLUSIVE";
+    s.taskOutcome = "NOT_VERIFIED";
     // Keep whatever was observed (if the run got going) so it can be inspected.
     if (s.providerRunId) s.report = buildFallbackReport(s, error.message);
   });

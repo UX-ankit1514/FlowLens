@@ -96,7 +96,7 @@ const r = session.report;
 log("Events:", session.events.length, "| steps:", session.steps.length, "| screenshots:", session.steps.filter((s) => s.hasScreenshot).length);
 if (r) {
   log("Report method:", r.method, "| checkpoints:", r.checkpoints.map((c) => c.status).join(", "));
-  log("Findings:", r.findings.length, "| blockers:", r.blockers.length, "| valid structured result:", r.structuredResultValid);
+  log("Findings:", r.findings.length, "| technical blockers:", r.technicalBlockers.length, "| patterns:", r.journey.patterns.length, "| valid structured result:", r.structuredResultValid);
 }
 if (session.error) log("Error:", JSON.stringify(session.error));
 log("Console errors:", consoleErrors.length ? consoleErrors.slice(0, 10) : "none");

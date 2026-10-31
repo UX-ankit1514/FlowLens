@@ -46,6 +46,8 @@ export function LiveSession({ id }: { id: string }) {
   const [cancelling, setCancelling] = useState(false);
   const [cancelMessage, setCancelMessage] = useState<string>();
   const lastAnnounced = useRef<string>(undefined);
+  const reportOpened = useRef(false);
+  const watchedActiveSession = useRef(false);
 
   const status = session ? sessionStatusView(session) : undefined;
   const now = useNow(Boolean(status?.busy));
@@ -56,6 +58,33 @@ export function LiveSession({ id }: { id: string }) {
       lastAnnounced.current = status.label;
     }
   }, [status]);
+
+  useEffect(() => {
+    if (!session) return;
+    if (
+      session.executionStatus === "CREATED" ||
+      session.executionStatus === "STARTING" ||
+      session.executionStatus === "RUNNING" ||
+      session.executionStatus === "ANALYSING"
+    ) {
+      watchedActiveSession.current = true;
+      return;
+    }
+    // Only advance to the report when this mounted page actually observed the
+    // run in progress. Loading an already-completed session (for example via
+    // “Back to session” from the report) must remain on the session page.
+    if (
+      session.executionStatus !== "COMPLETED" ||
+      !session.report ||
+      !watchedActiveSession.current ||
+      reportOpened.current
+    ) {
+      return;
+    }
+    reportOpened.current = true;
+    announce("Report ready. Opening the report.");
+    router.push(`/sessions/${id}/report`);
+  }, [id, router, session]);
 
   if (loadError === "not-found") return <SessionNotFound />;
   if (loadError === "network" && !session) return <SessionLoadFailed onRetry={() => void refetch()} />;

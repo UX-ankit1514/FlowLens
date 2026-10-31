@@ -1,16 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import styled from "styled-components";
-import {
-  Box,
-  Button,
-  Collapsible,
-  CollapsibleBody,
-  CollapsibleLink,
-  Heading,
-  Text,
-} from "@razorpay/blade/components";
+import { Box, Text } from "@razorpay/blade/components";
 import type { Theme } from "@razorpay/blade/components";
 import { formatDateTime } from "@/lib/presentation/labels";
 import type { EvidenceItem, TestSession, UsabilityReport } from "@/types";
@@ -34,147 +25,243 @@ const Pre = styled.pre(
 `,
 );
 
-const KIND_GROUPS: Array<{ title: string; kinds: EvidenceItem["kind"][]; note?: string }> = [
-  { title: "Agent checkpoint reports", kinds: ["AGENT_CHECKPOINT"], note: "What the agent reported for each success criterion." },
-  { title: "Agent-reported actions", kinds: ["AGENT_ACTION"] },
-  { title: "Agent-reported obstacles", kinds: ["AGENT_OBSTACLE"] },
-];
-
-const SCREENSHOT_PREVIEW = 12;
-
-export function EvidenceSection({ session, report }: { session: TestSession; report: UsabilityReport }) {
-  const allScreenshots = session.steps.filter((s) => s.hasScreenshot);
-  const [showAll, setShowAll] = useState(false);
-  const screenshots = showAll ? allScreenshots : allScreenshots.slice(0, SCREENSHOT_PREVIEW);
-
-  // Opening a link to a hidden screenshot (e.g. #evidence-S30) reveals the full grid.
-  if (!showAll && typeof window !== "undefined") {
-    const target = window.location.hash.replace("#evidence-", "");
-    if (allScreenshots.slice(SCREENSHOT_PREVIEW).some((s) => s.ref === target)) setShowAll(true);
+const Group = styled.details(
+  ({ theme }: { theme: Theme }) => `
+  border-bottom: 1px solid ${theme.colors.surface.border.gray.muted};
+  scroll-margin-top: 96px;
+  > summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: ${theme.spacing[4]}px;
+    padding: ${theme.spacing[5]}px ${theme.spacing[2]}px;
+    border-radius: ${theme.border.radius.small}px;
   }
+  > summary::-webkit-details-marker { display: none; }
+  > summary::after { content: "+"; color: ${theme.colors.surface.text.gray.muted}; font-size: 16px; }
+  &[open] > summary::after { content: "−"; }
+  > summary:focus-visible { outline: 2px solid ${theme.colors.interactive.border.primary.default}; outline-offset: -2px; }
+  @media (hover: hover) and (pointer: fine) {
+    > summary:hover { background: ${theme.colors.surface.background.gray.moderate}; }
+  }
+  > .group-body { padding: 0 ${theme.spacing[2]}px ${theme.spacing[6]}px; }
+`,
+);
+
+/** Which evidence group holds a reference, so links can open it. */
+export function evidenceGroupOf(ref: string): string | undefined {
+  if (/^[AO]\d+$/.test(ref)) return "agent-report";
+  if (/^N\d+$/.test(ref)) return "notes";
+  if (/^E\d+$/.test(ref)) return "events";
+  if (/^S\d+$/.test(ref)) return "screenshots";
+  return undefined;
+}
+
+export function EvidenceSection({
+  session,
+  report,
+  open,
+  setOpen,
+}: {
+  session: TestSession;
+  report: UsabilityReport;
+  open: Set<string>;
+  setOpen: (id: string, isOpen: boolean) => void;
+}) {
+  const d = session.definition;
+  const screenshots = session.steps.filter((s) => s.hasScreenshot);
+  const agentItems = report.evidence.filter((e) => e.kind === "AGENT_ACTION" || e.kind === "AGENT_OBSTACLE");
+  const events = report.evidence.filter((e) => e.kind === "TIMELINE_EVENT");
+
+  const group = (id: string, title: string, meta: string, body: React.ReactNode) => (
+    <Group id={`group-${id}`} open={open.has(id)} onToggle={(e) => setOpen(id, (e.currentTarget as HTMLDetailsElement).open)}>
+      <summary>
+        <Text weight="semibold">{title}</Text>
+        <Box flexShrink={0} marginLeft="auto">
+          <Text size="small" color="surface.text.gray.muted">
+            {meta}
+          </Text>
+        </Box>
+      </summary>
+      <div className="group-body">{open.has(id) ? body : null}</div>
+    </Group>
+  );
 
   return (
-    <Box display="flex" flexDirection="column" gap="spacing.8">
-      <Box display="flex" flexDirection="column" gap="spacing.4">
-        <SubHeading title="Screenshots captured during this run" note="Recorded by TinyFish at each agent step. Not every action has a screenshot." />
-        {allScreenshots.length === 0 ? (
+    <Box display="flex" flexDirection="column" borderTopWidth="thin" borderTopColor="surface.border.gray.muted">
+      {group(
+        "setup",
+        "Test setup",
+        "Persona, goal and criteria as supplied",
+        <Box display="flex" flexDirection="column" gap="spacing.4">
+          <Field label="Website">
+            <PageLink url={d.websiteUrl} />
+          </Field>
+          <Field label="Persona (as supplied)">
+            <Box whiteSpace="pre-line">
+              <Text size="medium" wordBreak="break-word">
+                {d.persona.description}
+              </Text>
+            </Box>
+          </Field>
+          <Field label="Goal">
+            <Text size="medium" wordBreak="break-word">
+              {d.goal}
+            </Text>
+          </Field>
+          <Field label="Success criteria">
+            <Box display="flex" flexDirection="column" gap="spacing.1">
+              {d.successCriteria.map((c, i) => (
+                <Text key={i} size="medium" wordBreak="break-word">{`C${i + 1}. ${c}`}</Text>
+              ))}
+            </Box>
+          </Field>
+        </Box>,
+      )}
+      {group(
+        "agent-account",
+        "The agent's own account",
+        "Self-reported at the end of the run",
+        <Box display="flex" flexDirection="column" gap="spacing.4">
+          <Field label="Outcome summary">
+            <Text size="medium" wordBreak="break-word">
+              {report.agentSummary ?? "Not provided"}
+            </Text>
+          </Field>
+          <Field label="What the agent found">
+            <Text size="medium" wordBreak="break-word">
+              {report.finalAnswer ?? "Not provided"}
+            </Text>
+          </Field>
+        </Box>,
+      )}
+      {group(
+        "screenshots",
+        "Screenshots",
+        `${screenshots.length} captured by TinyFish`,
+        screenshots.length === 0 ? (
           <Text size="small" color="surface.text.gray.muted">
-            No screenshots were captured for this run. Evidence is limited to the timeline, URLs and agent reports.
+            No screenshots were captured for this run.
           </Text>
         ) : (
-          <Box display="grid" gridTemplateColumns={{ base: "repeat(2, minmax(0, 1fr))", m: "repeat(3, minmax(0, 1fr))" }} gap="spacing.5">
+          <Box display="grid" gridTemplateColumns={{ base: "repeat(2, minmax(0, 1fr))", m: "repeat(4, minmax(0, 1fr))" }} gap="spacing.4">
             {screenshots.map((step) => (
               <Box key={step.stepId} id={`evidence-${step.ref}`} display="flex" flexDirection="column" gap="spacing.2">
                 <EvidenceImage src={screenshotUrl(session.id, step.stepId)} refLabel={step.ref} action={step.action} />
-                <Text size="small" color="surface.text.gray.subtle" truncateAfterLines={2}>
-                  <Text as="span" size="small" weight="semibold">
-                    {step.ref}
-                  </Text>{" "}
-                  {step.action}
+                <Text size="xsmall" color="surface.text.gray.subtle" truncateAfterLines={2}>
+                  {`${step.ref} ${step.action}`}
                 </Text>
               </Box>
             ))}
           </Box>
-        )}
-        {allScreenshots.length > SCREENSHOT_PREVIEW ? (
-          <Box>
-            <Button variant="tertiary" size="small" onClick={() => setShowAll((v) => !v)}>
-              {showAll ? "Show fewer screenshots" : `Show all ${allScreenshots.length} screenshots`}
-            </Button>
+        ),
+      )}
+      {group(
+        "agent-report",
+        "Agent's reported actions and obstacles",
+        `${agentItems.length} items`,
+        agentItems.length === 0 ? (
+          <Text size="small" color="surface.text.gray.muted">
+            The agent didn&apos;t report any actions or obstacles.
+          </Text>
+        ) : (
+          <Box display="flex" flexDirection="column">
+            {agentItems.map((item) => (
+              <EvidenceRow key={item.ref} item={item} />
+            ))}
           </Box>
-        ) : null}
-      </Box>
-
-      {KIND_GROUPS.map((group) => {
-        const items = report.evidence.filter((e) => group.kinds.includes(e.kind));
-        if (items.length === 0) return null;
-        return (
-          <Box key={group.title} display="flex" flexDirection="column" gap="spacing.4">
-            <SubHeading title={group.title} note={group.note} />
-            <Box display="flex" flexDirection="column">
-              {items.map((item) => (
-                <EvidenceRow key={item.ref} item={item} />
-              ))}
-            </Box>
-          </Box>
-        );
-      })}
-
-      <Box display="flex" flexDirection="column" gap="spacing.4">
-        <SubHeading title="Pages visited" note="As reported by the agent, in order." />
-        {report.urlsVisited.length === 0 ? (
+        ),
+      )}
+      {group(
+        "pages",
+        "Pages visited",
+        `${report.urlsVisited.length} reported by the agent`,
+        report.urlsVisited.length === 0 ? (
           <Text size="small" color="surface.text.gray.muted">
             The agent didn&apos;t report any page URLs.
           </Text>
         ) : (
-          <Box as="span" display="flex" flexDirection="column" gap="spacing.2">
+          <Box display="flex" flexDirection="column" gap="spacing.2">
             {report.urlsVisited.map((url, i) => (
               <Box key={`${url}-${i}`} display="flex" gap="spacing.3" minWidth="0px">
-                <Text size="small" color="surface.text.gray.muted" as="span">
-                  {i + 1}.
-                </Text>
+                <Text size="small" color="surface.text.gray.muted">{`${i + 1}.`}</Text>
                 <PageLink url={url} />
               </Box>
             ))}
           </Box>
-        )}
-      </Box>
-
-      <Box display="flex" flexDirection="column" gap="spacing.4">
-        <SubHeading title="Your observations" note="Human-authored notes added during the session. Kept separate from the agent's evidence." />
-        {session.notes.length === 0 ? (
+        ),
+      )}
+      {group(
+        "events",
+        "Live events from TinyFish",
+        `${events.length} received`,
+        events.length === 0 ? (
+          <Text size="small" color="surface.text.gray.muted">
+            No live events were received for this session.
+          </Text>
+        ) : (
+          <Box display="flex" flexDirection="column">
+            {events.map((item) => (
+              <EvidenceRow key={item.ref} item={item} />
+            ))}
+          </Box>
+        ),
+      )}
+      {group(
+        "notes",
+        "Your observations",
+        `${session.notes.length} ${session.notes.length === 1 ? "note" : "notes"}`,
+        session.notes.length === 0 ? (
           <Text size="small" color="surface.text.gray.muted">
             No notes were added.
           </Text>
         ) : (
-          session.notes.map((note) => (
-            <Box
-              key={note.id}
-              id={`evidence-${note.ref}`}
-              padding="spacing.4"
-              borderRadius="medium"
-              backgroundColor="surface.background.gray.moderate"
-            >
-              <Text size="small" color="surface.text.gray.muted">
-                {note.ref} · Designer note · {formatDateTime(note.createdAt)}
-              </Text>
-              <Text size="medium" wordBreak="break-word">
-                {note.text}
-              </Text>
-            </Box>
-          ))
-        )}
-      </Box>
-
-      <Collapsible>
-        <CollapsibleLink>Raw TinyFish result</CollapsibleLink>
-        <CollapsibleBody>
-          <Box paddingTop="spacing.4" display="flex" flexDirection="column" gap="spacing.3">
-            <Text size="small" color="surface.text.gray.muted">
-              The provider&apos;s final payload, preserved unchanged. Everything above is derived from it and from the live
-              event stream.
-            </Text>
-            <Pre tabIndex={0} aria-label="Raw TinyFish result JSON">
-              {JSON.stringify(session.rawResult ?? null, null, 2)}
-            </Pre>
+          <Box display="flex" flexDirection="column" gap="spacing.3">
+            {session.notes.map((note) => (
+              <Box key={note.id} id={`evidence-${note.ref}`} padding="spacing.4" borderRadius="medium" backgroundColor="surface.background.gray.moderate">
+                <Text size="small" color="surface.text.gray.muted">{`${note.ref} · Designer note · ${formatDateTime(note.createdAt)}`}</Text>
+                <Text size="medium" wordBreak="break-word">
+                  {note.text}
+                </Text>
+              </Box>
+            ))}
           </Box>
-        </CollapsibleBody>
-      </Collapsible>
+        ),
+      )}
+      {group(
+        "about",
+        "About this report",
+        report.method === "AI_INTERPRETATION" ? "AI interpretation" : "Evidence summary",
+        <Box display="flex" flexDirection="column" gap="spacing.3">
+          <Text size="medium">{report.methodNote}</Text>
+          {report.limitations.map((l, i) => (
+            <Text key={i} size="small" color="surface.text.gray.subtle">
+              {l}
+            </Text>
+          ))}
+        </Box>,
+      )}
+      {group(
+        "raw",
+        "Raw TinyFish result",
+        "Preserved unchanged",
+        <Pre tabIndex={0} aria-label="Raw TinyFish result JSON">
+          {JSON.stringify(session.rawResult ?? null, null, 2)}
+        </Pre>,
+      )}
     </Box>
   );
 }
 
-function SubHeading({ title, note }: { title: string; note?: string }) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <Box display="flex" flexDirection="column" gap="spacing.1">
-      <Heading as="h3" size="small">
-        {title}
-      </Heading>
-      {note ? (
-        <Text size="small" color="surface.text.gray.muted">
-          {note}
-        </Text>
-      ) : null}
+    <Box display="flex" flexDirection="column" gap="spacing.1" minWidth="0px">
+      <Text size="small" color="surface.text.gray.muted">
+        {label}
+      </Text>
+      {children}
     </Box>
   );
 }
@@ -184,7 +271,7 @@ function EvidenceRow({ item }: { item: EvidenceItem }) {
     <Box
       id={`evidence-${item.ref}`}
       display="grid"
-      gridTemplateColumns="48px minmax(0, 1fr)"
+      gridTemplateColumns="44px minmax(0, 1fr)"
       gap="spacing.4"
       paddingY="spacing.4"
       borderBottomWidth="thin"
@@ -202,11 +289,7 @@ function EvidenceRow({ item }: { item: EvidenceItem }) {
             {item.detail}
           </Text>
         ) : null}
-        {item.pageUrl ? (
-          <Box>
-            <PageLink url={item.pageUrl} />
-          </Box>
-        ) : null}
+        {item.pageUrl ? <PageLink url={item.pageUrl} /> : null}
       </Box>
     </Box>
   );

@@ -15,12 +15,22 @@ export type ExecutionStatus =
   | "FAILED"
   | "CANCELLED";
 
+/**
+ * Task outcome, judged against the designer's success criteria. A provider
+ * run marked "completed" never establishes task success on its own:
+ * REPORTED_COMPLETE means the agent claimed every criterion but FlowLens could
+ * not confirm them independently; VERIFIED_COMPLETE requires confirmation.
+ */
 export type TaskOutcome =
-  | "COMPLETED"
+  | "VERIFIED_COMPLETE"
+  | "REPORTED_COMPLETE"
   | "PARTIAL"
-  | "BLOCKED"
   | "NOT_COMPLETED"
-  | "INCONCLUSIVE";
+  | "BLOCKED"
+  | "NOT_VERIFIED";
+
+/** Outcome values written by reports before version 2 (still found in saved sessions). */
+export type LegacyTaskOutcome = "COMPLETED" | "INCONCLUSIVE";
 
 export type Persona = {
   id: string;
@@ -137,60 +147,195 @@ export type TestSession = {
   notes: DesignerNote[];
   cancelRequested: boolean;
   report?: UsabilityReport;
+  /** Designer-recorded comparison with real research participants, per finding. */
+  validations?: HumanValidation[];
 };
 
-export type FindingCategory =
-  | "BROKEN_JOURNEY"
-  | "MISSING_INFORMATION"
-  | "CONFUSING_FLOW"
-  | "POTENTIAL_FRICTION";
+/* ------------------------------------------------------------------------ */
+/* Result verification                                                       */
+/* ------------------------------------------------------------------------ */
 
-export type Severity = "HIGH" | "MEDIUM" | "LOW";
-export type Confidence = "VERIFIED" | "INFERRED" | "UNCERTAIN";
-
-export type UXFinding = {
-  id: string;
-  title: string;
-  category: FindingCategory;
-  severity: Severity;
-  severityRationale: string;
-  observation: string;
-  hypothesis?: string;
-  personaRelevance?: string;
-  recommendation: string;
-  evidenceRefs: string[];
-  pageUrl?: string;
-  confidence: Confidence;
-  /** Where the finding came from. */
-  origin: "AGENT_REPORTED" | "PATTERN" | "AI_INTERPRETATION";
-};
-
+/** What the agent reported for a success criterion. */
 export type CheckpointStatus = "PASSED" | "FAILED" | "BLOCKED" | "NOT_VERIFIED";
+
+/**
+ * How far an agent-reported "passed" is backed by recorded evidence.
+ * CONFIRMED needs a step screenshot that shows it; CONSISTENT means the
+ * recorded steps agree but nothing showed it directly; AGENT_REPORTED means
+ * only the agent's own account supports it.
+ */
+export type CheckpointVerification =
+  | "CONFIRMED"
+  | "CONSISTENT"
+  | "AGENT_REPORTED"
+  | "LIMITED"
+  | "CONTRADICTED"
+  | "NOT_APPLICABLE";
 
 export type Checkpoint = {
   id: string; // "C1", ...
   description: string; // the designer's success criterion, verbatim
-  status: CheckpointStatus;
+  status: CheckpointStatus; // as reported by the agent
   observation?: string; // agent-reported
   pageUrl?: string;
   evidenceRefs: string[];
+  verification: CheckpointVerification;
+  verificationNote?: string;
+  verificationRefs: string[];
 };
 
-export type TestBlocker = {
-  id: string;
-  kind: string;
+/* ------------------------------------------------------------------------ */
+/* Journey trace                                                             */
+/* ------------------------------------------------------------------------ */
+
+/** Inferred from the wording of the agent's stated purpose, never observed directly. */
+export type ActionType =
+  | "NAVIGATE"
+  | "CLICK"
+  | "TYPE"
+  | "SELECT"
+  | "SEARCH"
+  | "READ"
+  | "SCROLL"
+  | "WAIT"
+  | "DISMISS"
+  | "SUBMIT"
+  | "GO_BACK"
+  | "RELOAD"
+  | "FOCUS"
+  | "OTHER";
+
+export type StepFlagKind =
+  | "REPEAT"
+  | "RETRY"
+  | "BACKTRACK"
+  | "ERROR"
+  | "TECHNICAL"
+  | "INTERRUPTION"
+  | "DIRECT_URL"
+  | "WAIT";
+
+export type StepFlag = { kind: StepFlagKind; note: string; relatedRefs: string[] };
+
+/** TinyFish doesn't record a per-step result; this says where one came from. */
+export type StepResult = { text: string; source: "AGENT_REPORT" | "NEXT_STEP" | "RUN_RECORD" };
+
+export type JourneyStep = {
+  /** "S#" for TinyFish step records, "E#" when only live progress events exist. */
+  ref: string;
+  number: number;
+  stepId?: string;
+  timestamp?: string;
+  elapsedMs?: number;
+  /** TinyFish's own duration for the step, e.g. "1.2s". */
+  duration?: string;
+  /** The agent's stated purpose, verbatim as TinyFish recorded it. */
+  statedPurpose: string;
+  /** Used only when no purpose was recorded, and always labelled as inferred. */
+  inferredPurpose?: string;
+  actionType: ActionType;
+  terminal?: "COMPLETED" | "FAILED" | "CANCELLED";
+  hasScreenshot: boolean;
+  eventRef?: string;
+  /** The agent's end-of-run account of this action, matched by wording. */
+  agentAction?: { ref: string; description: string; purpose?: string; pageUrl?: string; result: string };
+  result?: StepResult;
+  flags: StepFlag[];
+};
+
+export type TraceCompleteness = "STEP_LEVEL" | "PROGRESS_ONLY" | "NONE";
+
+export type JourneyPatternKind =
+  | "REPEATED_ACTION"
+  | "BACKTRACKING"
+  | "ROUTE_CHANGE"
+  | "DEAD_END"
+  | "INFORMATION_NOT_FOUND"
+  | "CONFUSING_NAVIGATION"
+  | "UNNECESSARY_STEPS"
+  | "INCOMPLETE_TASK";
+
+export type JourneyPattern = {
+  id: string; // "P1", ...
+  kind: JourneyPatternKind;
+  title: string;
   description: string;
-  pageUrl?: string;
+  stepRefs: string[];
   evidenceRefs: string[];
+  origin: "RULES" | "AI";
 };
 
-export type Recommendation = {
-  id: string;
-  findingId?: string;
-  observation: string;
-  hypothesis?: string;
-  recommendation: string;
+export type JourneyTrace = {
+  completeness: TraceCompleteness;
+  completenessNote: string;
+  endedEarly: boolean;
+  startedAt?: string;
+  durationMs?: number;
+  steps: JourneyStep[];
+  patterns: JourneyPattern[];
 };
+
+/* ------------------------------------------------------------------------ */
+/* Findings, technical blockers, human validation                            */
+/* ------------------------------------------------------------------------ */
+
+export type FindingKind = "FUNCTIONAL_FAILURE" | "USABILITY_HYPOTHESIS";
+
+export type UXFinding = {
+  id: string; // "F1", ...
+  kind: FindingKind;
+  title: string;
+  /** What happened, as observed. */
+  whatHappened: string;
+  /** Where in the journey it happened. */
+  stepRefs: string[];
+  pageUrl?: string;
+  /** Why it might matter for the supplied persona or goal. */
+  personaImpact?: string;
+  /** What a designer should investigate or change. */
+  designerAction: string;
+  /** A known reason the observation may not reflect a real visitor. */
+  caveat?: string;
+  evidenceRefs: string[];
+  affectsCriteria: string[];
+  origin: "RULES" | "AI";
+};
+
+export type TechnicalBlockerKind =
+  | "BOT_PROTECTION"
+  | "PROXY_OR_NETWORK"
+  | "AGENT_ENVIRONMENT"
+  | "SITE_UNREACHABLE"
+  | "LOGIN_REQUIRED"
+  | "REAL_WORLD_ACTION";
+
+/** Something about the test environment, never a usability verdict. */
+export type TechnicalBlocker = {
+  id: string; // "T1", ...
+  kind: TechnicalBlockerKind;
+  title: string;
+  description: string;
+  effect: string;
+  stoppedRun: boolean;
+  stepRefs: string[];
+  evidenceRefs: string[];
+  affectsCriteria: string[];
+  pageUrl?: string;
+};
+
+export type HumanValidationStatus = "NOT_TESTED" | "OBSERVED" | "NOT_OBSERVED";
+
+export type HumanValidation = {
+  findingId: string;
+  status: HumanValidationStatus;
+  /** The designer's own note, e.g. "3 of 5 participants missed the fare". */
+  note?: string;
+  updatedAt: string;
+};
+
+/* ------------------------------------------------------------------------ */
+/* Evidence and report                                                       */
+/* ------------------------------------------------------------------------ */
 
 export type EvidenceKind =
   | "TIMELINE_EVENT"
@@ -212,6 +357,8 @@ export type EvidenceItem = {
 export type AnalysisMethod = "EVIDENCE_SUMMARY" | "AI_INTERPRETATION";
 
 export type UsabilityReport = {
+  /** Report format version; older saved reports are rebuilt from their evidence. */
+  version: number;
   sessionId: string;
   generatedAt: string;
   method: AnalysisMethod;
@@ -221,13 +368,16 @@ export type UsabilityReport = {
   aiUnavailableReason?: string;
   taskOutcome: TaskOutcome;
   outcomeRationale: string;
+  /** Two or three sentences. */
   summary: string;
+  /** The single most important thing to do next. */
+  nextAction: string;
   agentSummary?: string;
   finalAnswer?: string;
   checkpoints: Checkpoint[];
+  journey: JourneyTrace;
   findings: UXFinding[];
-  blockers: TestBlocker[];
-  recommendations: Recommendation[];
+  technicalBlockers: TechnicalBlocker[];
   evidence: EvidenceItem[];
   urlsVisited: string[];
   limitations: string[];
@@ -237,6 +387,21 @@ export type UsabilityReport = {
 
 /** Public, client-safe view of a session (identical today; kept explicit). */
 export type SessionView = TestSession;
+
+/** Compact persisted-session view used by the local Recents screen. */
+export type RecentSessionSummary = {
+  id: string;
+  title: string;
+  websiteUrl: string;
+  goal: string;
+  executionStatus: ExecutionStatus;
+  taskOutcome?: TaskOutcome;
+  createdAt: string;
+  finishedAt?: string;
+  hasReport: boolean;
+  eventCount: number;
+  stepCount: number;
+};
 
 export type AppConfigView = {
   tinyfishConfigured: boolean;

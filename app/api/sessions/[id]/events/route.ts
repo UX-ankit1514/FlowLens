@@ -2,11 +2,13 @@ import type { NextRequest } from "next/server";
 import { snapshotOf } from "@/lib/session-store/snapshot";
 import { sessionStore, type StoreChange } from "@/lib/session-store/store";
 import { isTerminal } from "@/lib/session-store/transitions";
+import { reconcileSessionRun } from "@/lib/tinyfish/runner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const KEEPALIVE_MS = 15_000;
+const PROVIDER_RECONCILE_MS = 10_000;
 
 /**
  * GET /api/sessions/:id/events — Server-Sent Events.
@@ -72,16 +74,21 @@ export async function GET(request: NextRequest, ctx: RouteContext<"/api/sessions
         else sendSnapshotAndMaybeEnd();
       });
       const keepalive = setInterval(() => send(`: keepalive\n\n`), KEEPALIVE_MS);
+      // This also recovers a run whose original background task was interrupted
+      // by a development hot reload while the live session page stayed open.
+      const providerReconcile = setInterval(() => void reconcileSessionRun(id), PROVIDER_RECONCILE_MS);
       const onAbort = () => close();
       request.signal.addEventListener("abort", onAbort);
 
       cleanup = () => {
         unsubscribe();
         clearInterval(keepalive);
+        clearInterval(providerReconcile);
         request.signal.removeEventListener("abort", onAbort);
       };
 
       sendSnapshotAndMaybeEnd();
+      void reconcileSessionRun(id);
     },
     cancel() {
       cleanup();

@@ -12,6 +12,7 @@ const OBSTACLE_LABELS: Record<string, string> = {
   captcha_or_bot_protection: "CAPTCHA or bot protection",
   site_unreachable: "Site unreachable",
   irreversible_step_required: "Stopped before an irreversible step",
+  automation_environment: "Browser, proxy or network problem",
   other: "Other obstacle",
 };
 
@@ -55,7 +56,7 @@ export function buildEvidenceIndex(session: TestSession, observations?: AgentObs
       ref: `A${i + 1}`,
       kind: "AGENT_ACTION",
       label: action.description,
-      detail: `Result: ${action.result.replace(/_/g, " ")}`,
+      detail: `${action.purpose ? `Purpose: ${action.purpose} · ` : ""}Result: ${action.result.replace(/_/g, " ")}`,
       pageUrl: action.page_url,
     });
   });
@@ -63,8 +64,14 @@ export function buildEvidenceIndex(session: TestSession, observations?: AgentObs
     items.push({
       ref: `O${i + 1}`,
       kind: "AGENT_OBSTACLE",
-      label: `${obstacleLabel(obstacle.kind)}${obstacle.blocked_progress ? " (blocked progress)" : ""}`,
-      detail: obstacle.description,
+      label: `${obstacle.summary ? `${obstacle.summary} — ` : ""}${obstacleLabel(obstacle.kind)}${obstacle.blocked_progress ? " (blocked progress)" : ""}`,
+      detail: [
+        obstacle.description,
+        obstacle.expected ? `Expected: ${obstacle.expected}` : "",
+        obstacle.looked_in ? `Looked in: ${obstacle.looked_in}` : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
       pageUrl: obstacle.page_url,
     });
   });

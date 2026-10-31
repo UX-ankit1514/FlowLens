@@ -63,11 +63,19 @@ const runDetailsSchema = z.object({
     })
     .nullish(),
   streaming_url: z.string().nullish(),
+  goal: z.string().nullish(),
+  created_at: z.string().nullish(),
+  started_at: z.string().nullish(),
   finished_at: z.string().nullish(),
   steps: z.array(runStepSchema).default([]),
 });
 
 export type RunDetails = z.infer<typeof runDetailsSchema>;
+
+/** Validates a run record (used when reopening an earlier TinyFish run). */
+export function parseRunDetails(value: unknown): RunDetails {
+  return runDetailsSchema.parse(value);
+}
 
 async function tinyfishFetch(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`${TINYFISH_API_BASE}${path}`, {

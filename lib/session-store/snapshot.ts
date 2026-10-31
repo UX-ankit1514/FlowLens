@@ -1,4 +1,4 @@
-import type { TestSession } from "@/types";
+import type { RecentSessionSummary, TestSession } from "@/types";
 
 /** Lightweight live state sent over SSE on connect and after every change. */
 export function snapshotOf(s: TestSession) {
@@ -19,3 +19,19 @@ export function snapshotOf(s: TestSession) {
 }
 
 export type SessionSnapshot = ReturnType<typeof snapshotOf>;
+
+export function recentSummaryOf(s: TestSession): RecentSessionSummary {
+  return {
+    id: s.id,
+    title: s.definition.sessionName || s.definition.goal,
+    websiteUrl: s.definition.websiteUrl,
+    goal: s.definition.goal,
+    executionStatus: s.executionStatus,
+    taskOutcome: s.taskOutcome,
+    createdAt: s.createdAt,
+    finishedAt: s.finishedAt,
+    hasReport: Boolean(s.report),
+    eventCount: s.events.length,
+    stepCount: s.steps.length,
+  };
+}

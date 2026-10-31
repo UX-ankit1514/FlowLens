@@ -1,33 +1,38 @@
 "use client";
 
 import { Box, Link, Text, Tooltip, TooltipInteractiveWrapper } from "@razorpay/blade/components";
-import type { EvidenceItem } from "@/types";
+import { useReportNav } from "./nav";
 
-/** Inline references (S3, O1, C2…) that jump to the evidence section. */
-export function EvidenceRefs({ refs, evidence }: { refs: string[]; evidence: EvidenceItem[] }) {
+/** Inline references (S3, O1, C2…) that open the step or evidence they point to. */
+export function EvidenceRefs({ refs, empty = "No linked evidence", max = 8 }: { refs: string[]; empty?: string; max?: number }) {
+  const { go, labelOf } = useReportNav();
   if (refs.length === 0) {
     return (
       <Text size="small" color="surface.text.gray.muted">
-        No linked evidence
+        {empty}
       </Text>
     );
   }
-  const byRef = new Map(evidence.map((e) => [e.ref, e]));
+  const shown = refs.slice(0, max);
   return (
     <Box display="flex" flexWrap="wrap" gap="spacing.3" alignItems="center">
-      {refs.map((ref) => {
-        const item = byRef.get(ref);
-        const label = item ? `${ref}: ${item.label}` : `${ref} (not available)`;
+      {shown.map((ref) => {
+        const label = labelOf(ref);
         return (
-          <Tooltip key={ref} content={label} placement="top">
+          <Tooltip key={ref} content={label ? `${ref}: ${label}` : ref} placement="top">
             <TooltipInteractiveWrapper>
-              <Link href={`#evidence-${ref}`} size="small" accessibilityLabel={`Evidence ${label}`}>
+              <Link variant="button" size="small" onClick={() => go(ref)} accessibilityLabel={`Show ${ref}${label ? `: ${label}` : ""}`}>
                 {ref}
               </Link>
             </TooltipInteractiveWrapper>
           </Tooltip>
         );
       })}
+      {refs.length > max ? (
+        <Text size="small" color="surface.text.gray.muted">
+          +{refs.length - max} more
+        </Text>
+      ) : null}
     </Box>
   );
 }

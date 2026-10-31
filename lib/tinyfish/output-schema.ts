@@ -26,6 +26,7 @@ export const AGENT_OBSTACLE_KINDS = [
   "captcha_or_bot_protection",
   "site_unreachable",
   "irreversible_step_required",
+  "automation_environment",
   "other",
 ] as const;
 
@@ -51,11 +52,12 @@ export const AGENT_OUTPUT_SCHEMA = {
     },
     actions: {
       type: "array",
-      maxItems: 40,
+      maxItems: 50,
       items: {
         type: "object",
         properties: {
           description: { type: "string" },
+          purpose: { type: "string", nullable: true },
           page_url: { type: "string", nullable: true },
           result: { type: "string", enum: [...AGENT_ACTION_RESULTS] },
         },
@@ -69,7 +71,10 @@ export const AGENT_OUTPUT_SCHEMA = {
         type: "object",
         properties: {
           kind: { type: "string", enum: [...AGENT_OBSTACLE_KINDS] },
+          summary: { type: "string", nullable: true },
           description: { type: "string" },
+          expected: { type: "string", nullable: true },
+          looked_in: { type: "string", nullable: true },
           page_url: { type: "string", nullable: true },
           blocked_progress: { type: "boolean" },
         },
@@ -117,13 +122,17 @@ const checkpointSchema = z.object({
 
 const actionSchema = z.object({
   description: z.string().catch(""),
+  purpose: optionalString,
   page_url: optionalString,
   result: enumOr(AGENT_ACTION_RESULTS, "succeeded"),
 });
 
 const obstacleSchema = z.object({
   kind: enumOr(AGENT_OBSTACLE_KINDS, "other"),
+  summary: optionalString,
   description: z.string().catch(""),
+  expected: optionalString,
+  looked_in: optionalString,
   page_url: optionalString,
   blocked_progress: z.boolean().catch(false),
 });

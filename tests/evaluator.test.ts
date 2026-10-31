@@ -21,38 +21,34 @@ describe("evidence summary report", () => {
     expect(report.findings.length).toBeGreaterThan(0);
     for (const finding of report.findings) {
       for (const ref of finding.evidenceRefs) expect(refs.has(ref), `${finding.id} cites ${ref}`).toBe(true);
-      if (finding.evidenceRefs.length === 0) expect(finding.confidence).toBe("INFERRED");
     }
   });
 
-  it("justifies severity: a blocking obstacle on a failed criterion is HIGH", () => {
+  it("connects a reported obstacle to the criterion it affected and gives a specific action", () => {
     const report = buildEvidenceSummaryReport(makeSession(partialResult));
-    const missing = report.findings.find((f) => f.category === "MISSING_INFORMATION");
-    expect(missing?.severity).toBe("HIGH");
-    expect(missing?.severityRationale).toMatch(/stopped its progress/);
-    expect(missing?.hypothesis).toMatch(/not found during this test/);
-    const confusing = report.findings.find((f) => f.category === "CONFUSING_FLOW");
-    expect(confusing?.severity).toBe("LOW");
+    const missing = report.findings.find((f) => f.evidenceRefs.includes("O1"));
+    expect(missing?.kind).toBe("USABILITY_HYPOTHESIS");
+    expect(missing?.affectsCriteria).toContain("C2");
+    expect(missing?.designerAction).toMatch(/cart|delivery/i);
   });
 
-  it("derives repeated-visit friction only from recorded URLs, marked as inferred", () => {
+  it("records journey patterns separately from usability findings", () => {
     const report = buildEvidenceSummaryReport(makeSession(partialResult));
-    const repeated = report.findings.find((f) => f.origin === "PATTERN");
-    expect(repeated?.observation).toContain("3 times");
-    expect(repeated?.confidence).toBe("INFERRED");
+    expect(report.journey.patterns.length).toBeGreaterThan(0);
+    expect(report.journey.patterns.every((pattern) => pattern.origin === "RULES")).toBe(true);
   });
 
   it("treats CAPTCHA as a test blocker, not a usability finding", () => {
     const report = buildEvidenceSummaryReport(makeSession(blockedResult));
     expect(report.taskOutcome).toBe("BLOCKED");
     expect(report.findings).toHaveLength(0);
-    expect(report.blockers).toHaveLength(1);
+    expect(report.technicalBlockers).toHaveLength(1);
     expect(report.outcomeRationale).toMatch(/not by itself a usability verdict/);
   });
 
   it("is inconclusive when the provider returned no structured result", () => {
     const report = buildEvidenceSummaryReport(makeSession(null));
-    expect(report.taskOutcome).toBe("INCONCLUSIVE");
+    expect(report.taskOutcome).toBe("NOT_VERIFIED");
     expect(report.findings).toHaveLength(0);
     expect(report.checkpoints.every((c) => c.status === "NOT_VERIFIED")).toBe(true);
     expect(report.structuredResultValid).toBe(false);
@@ -68,15 +64,14 @@ describe("evidence summary report", () => {
   it("never reports a cancelled session as completed and produces no findings", () => {
     const session = makeSession(partialResult, { executionStatus: "CANCELLED" });
     const report = buildFallbackReport(session, "Stopped by the designer.");
-    expect(report.taskOutcome).toBe("INCONCLUSIVE");
+    expect(report.taskOutcome).toBe("NOT_VERIFIED");
     expect(report.findings).toHaveLength(0);
-    expect(report.recommendations).toHaveLength(0);
   });
 
   it("does not turn a technical failure into a usability verdict", () => {
     const session = makeSession(null, { executionStatus: "FAILED" });
     const report = buildFallbackReport(session, "TinyFish had an infrastructure problem.");
-    expect(report.taskOutcome).toBe("INCONCLUSIVE");
+    expect(report.taskOutcome).toBe("NOT_VERIFIED");
     expect(report.findings).toHaveLength(0);
   });
 });
@@ -93,32 +88,33 @@ describe("AI interpretation layer", () => {
               stop_reason: "end_turn",
               parsed_output: {
                 summary: "The delivery cost was the main gap.",
+                next_action: "Show a delivery estimate in the cart.",
+                checkpoint_reviews: [],
+                patterns: [],
                 findings: [
                   {
+                    kind: "USABILITY_HYPOTHESIS",
                     title: "Delivery cost hidden",
-                    category: "MISSING_INFORMATION",
-                    severity: "HIGH",
-                    severity_rationale: "Blocked a criterion",
-                    observation: "Delivery cost not shown in the cart",
-                    hypothesis: "It may only appear at checkout",
-                    persona_relevance: "Sam needs the delivery cost to budget.",
-                    recommendation: "Show an estimate in the cart",
+                    what_happened: "Delivery cost not shown in the cart",
+                    step_refs: [],
+                    persona_impact: "Sam needs the delivery cost to budget.",
+                    designer_action: "Show an estimate in the cart",
+                    caveat: null,
                     evidence_refs: ["O1", "C2"],
+                    affects_criteria: ["C2"],
                     page_url: "https://shop.example.com/cart",
-                    confidence: "VERIFIED",
                   },
                   {
+                    kind: "USABILITY_HYPOTHESIS",
                     title: "Invented claim",
-                    category: "POTENTIAL_FRICTION",
-                    severity: "LOW",
-                    severity_rationale: "-",
-                    observation: "Something not in evidence",
-                    hypothesis: "",
-                    persona_relevance: "",
-                    recommendation: "Do something",
+                    what_happened: "Something not in evidence",
+                    step_refs: [],
+                    persona_impact: "",
+                    designer_action: "Do something",
+                    caveat: null,
                     evidence_refs: ["Z9"],
+                    affects_criteria: [],
                     page_url: null,
-                    confidence: "VERIFIED",
                   },
                 ],
               },
@@ -137,8 +133,8 @@ describe("AI interpretation layer", () => {
     expect(report.taskOutcome).toBe(base.taskOutcome);
     expect(report.checkpoints).toEqual(base.checkpoints);
     expect(report.findings[0].evidenceRefs).toEqual(["O1", "C2"]);
-    expect(report.findings[1].evidenceRefs).toEqual([]);
-    expect(report.findings[1].confidence).toBe("UNCERTAIN");
+    expect(report.findings).toHaveLength(1);
+    expect(report.findings[0].origin).toBe("AI");
     vi.doUnmock("@anthropic-ai/sdk");
   });
 });

@@ -3,11 +3,19 @@ import { randomUUID } from "node:crypto";
 import { collectFieldErrors, suggestSessionName, testInputSchema } from "@/lib/schemas/test-input";
 import { validatePublicWebsite } from "@/lib/security/dns";
 import { sessionStore } from "@/lib/session-store/store";
+import { recentSummaryOf } from "@/lib/session-store/snapshot";
 import { isTinyFishConfigured } from "@/lib/tinyfish/client";
 import { startSessionRun } from "@/lib/tinyfish/runner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/** GET /api/sessions — newest-first local history for the Recents screen. */
+export async function GET() {
+  return NextResponse.json(sessionStore.listRecent().map(recentSummaryOf), {
+    headers: { "Cache-Control": "no-store" },
+  });
+}
 
 /** POST /api/sessions — validate a test definition and start a real TinyFish run. */
 export async function POST(request: NextRequest) {
