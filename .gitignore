@@ -57,6 +57,8 @@ next-env.d.ts
 *.bmp
 *.ico
 *.svg
+# ...except the app icon, which is source, not an export
+!app/icon.svg
 *.heic
 *.tiff
 screenshots/

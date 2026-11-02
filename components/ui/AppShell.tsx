@@ -6,6 +6,7 @@ import styled from "styled-components";
 import { Box, Text } from "@razorpay/blade/components";
 import type { Theme } from "@razorpay/blade/components";
 import { useConnections } from "@/components/connections/ConnectionsContext";
+import { LogoMark } from "@/components/brand/Logo";
 
 const Bar = styled.header(
   ({ theme }: { theme: Theme }) => `
@@ -94,25 +95,6 @@ function ConnectionsButton() {
   );
 }
 
-/** The FlowLens mark: a lens (ring) with a focal point. */
-const Mark = styled.span(
-  ({ theme }: { theme: Theme }) => `
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 2px solid ${theme.colors.interactive.background.primary.default};
-  display: inline-grid;
-  place-items: center;
-  &::after {
-    content: "";
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: ${theme.colors.interactive.background.primary.default};
-  }
-`,
-);
-
 export function AppShell({
   children,
   trailing,
@@ -135,8 +117,8 @@ export function AppShell({
           justifyContent="space-between"
           gap="spacing.5"
         >
-          <BrandLink href="/" aria-label="FlowLens — start a new test">
-            <Mark aria-hidden />
+          <BrandLink href="/" aria-label="FlowLens home">
+            <LogoMark size={26} />
             <Text weight="semibold" size="large" as="span">
               FlowLens
             </Text>

@@ -259,7 +259,6 @@ function designerActionFor(
   where: string,
   stepRefs: string[],
   affected: Checkpoint[],
-  goal: string,
 ): string {
   const summary = truncate(obstacle.summary || obstacle.description, 110);
   const at = stepsText(stepRefs);
@@ -271,31 +270,29 @@ function designerActionFor(
           ? ` Related steps: ${formatRefRanges(stepRefs.slice(0, 6))}${stepRefs.length > 6 ? "…" : ""}.`
           : "";
       const check = obstacle.expected
-        ? `Check whether “${truncate(obstacle.expected, 90)}” is visible on ${where} to a real visitor.`
-        : `Open ${where} as a visitor and check what the agent reported: “${shortTitle(obstacle.summary || obstacle.description)}”.`;
-      return `${check}${looked} If it reproduces, show the information where the agent looked; if it doesn't, the test environment may have caused it.`;
+        ? `Open ${where} and check whether “${truncate(obstacle.expected, 90)}” is easy to find.`
+        : `Open ${where} and check what the agent reported: “${shortTitle(obstacle.summary || obstacle.description)}”.`;
+      return `${check}${looked} If you can't find it there either, show it where the agent looked; if you can, the test setup may have hidden it.`;
     }
     case "unclear_navigation":
-      return `On ${where}, review the choices the agent faced${at}: ${summary}. Check whether the labels make the route to “${truncate(goal, 70)}” obvious.`;
+      return `Check that the labels and controls on ${where} make the next step towards the goal obvious${at}. The agent reported: “${summary}”.`;
     case "unexpected_step":
-      return `Check whether the step the agent hit on ${where}${at} is needed at that point in the journey: ${summary}.`;
+      return `Check whether this step on ${where}${at} is needed at that point in the journey: “${summary}”.`;
     case "repeated_attempts":
-      return `Repeat the attempts${at} on ${where} yourself and check what feedback the page gives after each one.`;
+      return `Try the same thing yourself on ${where}${at} and check what feedback the page gives after each attempt.`;
     case "error_or_broken_page":
     case "action_failed":
-      return `Reproduce this on ${where}${at}: ${summary}. If it fails for a visitor too, fix it${affected.length ? ` — it stands in the way of ${ids(affected)}` : ""}.`;
+      return `Try to reproduce this on ${where}${at}: “${summary}”. If it fails for you too, fix it${affected.length ? `; it stands in the way of ${ids(affected)}` : ""}.`;
     default:
-      return `Review what happened on ${where}${at}: ${summary}.`;
+      return `Review what happened on ${where}${at}: “${summary}”.`;
   }
 }
 
 function impactFor(obstacle: AgentObstacle, affected: Checkpoint[]): string | undefined {
   if (affected.length > 0) {
-    return `It stood between the persona and ${affected
-      .map((c) => `${c.id} (“${truncate(c.description, 70)}”)`)
-      .join(" and ")}, which ${plural(affected.length, "wasn't", "weren't")} met.`;
+    return `It kept the persona from meeting ${affected.map((c) => `${c.id} (“${truncate(c.description, 70)}”)`).join(" and ")}.`;
   }
-  if (obstacle.blocked_progress) return "The agent reported that it stopped progress on this route toward the goal.";
+  if (obstacle.blocked_progress) return "The agent couldn't get any further along this route because of it.";
   return undefined;
 }
 
@@ -312,7 +309,6 @@ export function buildRuleBasedFindings(
 ): UXFinding[] {
   if (!observations) return [];
   const findings: UXFinding[] = [];
-  const goal = session.definition.goal;
   const covered = new Set<string>();
 
   observations.obstacles.forEach((obstacle, i) => {
@@ -335,7 +331,7 @@ export function buildRuleBasedFindings(
       stepRefs,
       pageUrl: obstacle.page_url,
       personaImpact: impactFor(obstacle, affected),
-      designerAction: designerActionFor(obstacle, hostPath(obstacle.page_url), stepRefs, affected, goal),
+      designerAction: designerActionFor(obstacle, hostPath(obstacle.page_url), stepRefs, affected),
       caveat: LOCATION_SENSITIVE.test(`${text} ${obstacle.expected ?? ""}`) ? LOCATION_CAVEAT : undefined,
       evidenceRefs: [`O${i + 1}`, ...affected.map((c) => c.id)],
       affectsCriteria: affected.map((c) => c.id),
@@ -354,11 +350,11 @@ export function buildRuleBasedFindings(
     findings.push({
       id: "",
       kind: "FUNCTIONAL_FAILURE",
-      title: `Didn't work: ${truncate(action.description, 70)}`,
-      whatHappened: `${action.description}${action.purpose ? ` (purpose: ${action.purpose})` : ""}. The agent reported this action as failed.`,
+      title: `${sentenceCase(truncate(action.description, 70))}: didn't work`,
+      whatHappened: `${sentenceCase(action.description)}${action.purpose ? ` (aim: ${lowerFirst(action.purpose)})` : ""}. The agent reported that this didn't work.`,
       stepRefs,
       pageUrl: action.page_url,
-      designerAction: `Try this yourself on ${where}${stepsText(stepRefs)}. If it fails for a visitor too, fix the control; if it works, the agent's attempt may not match how people use it.`,
+      designerAction: `Try this yourself on ${where}${stepsText(stepRefs)}. If it fails for you too, fix the control; if it works, the agent may have used it differently from how people would.`,
       evidenceRefs: [ref],
       affectsCriteria: [],
       origin: "RULES",
@@ -371,11 +367,11 @@ export function buildRuleBasedFindings(
     findings.push({
       id: "",
       kind: "USABILITY_HYPOTHESIS",
-      title: `Not met: ${truncate(c.description, 70)}`,
+      title: `Criterion not met: ${truncate(c.description, 70)}`,
       whatHappened: c.observation ?? "The agent reported this criterion as not met.",
       stepRefs: [],
       pageUrl: c.pageUrl,
-      designerAction: `Find out why ${c.id} failed: check ${hostPath(c.pageUrl)} for what the criterion needs, using the agent's note as a starting point.`,
+      designerAction: `Check ${hostPath(c.pageUrl)} for what ${c.id} needs and why the agent couldn't do it, starting from its note.`,
       caveat: LOCATION_SENSITIVE.test(`${c.description} ${c.observation ?? ""}`) ? LOCATION_CAVEAT : undefined,
       evidenceRefs: [c.id],
       affectsCriteria: [c.id],
@@ -415,14 +411,14 @@ function summarize(
   patterns: JourneyPattern[],
 ): string {
   if (!hasObservations) {
-    return "TinyFish didn't return a result FlowLens could check, so there are no findings. The journey timeline shows what was recorded.";
+    return "TinyFish didn't return a result FlowLens could check, so there are no issues to report. The journey section shows what was recorded.";
   }
   const sentences: string[] = [];
   const top = findings[0];
   if (top) {
     const more = findings.length - 1;
     sentences.push(
-      `Main issue: ${lowerFirst(top.title)}${stepsText(top.stepRefs.slice(0, 3))}.${more > 0 ? ` ${more} more ${plural(more, "finding", "findings")} below.` : ""}`,
+      `The biggest issue: ${lowerFirst(top.title)}${stepsText(top.stepRefs.slice(0, 3))}.${more > 0 ? ` ${more} more ${plural(more, "issue is", "issues are")} listed below.` : ""}`,
     );
   } else {
     sentences.push("The agent didn't report any usability obstacles on this journey.");
@@ -431,11 +427,11 @@ function summarize(
     const names = blockers.map((b) => BLOCKER_PHRASE[b.kind]);
     const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0];
     sentences.push(
-      `${sentenceCase(list)} affected the test; ${plural(blockers.length, "it's", "they're")} listed under technical blockers, not treated as design issues.`,
+      `${sentenceCase(list)} also got in the way of the test; ${plural(blockers.length, "that's", "those are")} listed as test-setup issues, not design problems.`,
     );
   }
   const notable = patterns.find((p) => ["REPEATED_ACTION", "BACKTRACKING", "ROUTE_CHANGE", "DEAD_END"].includes(p.kind));
-  if (notable && sentences.length < 3) sentences.push(`The trace also shows: ${lowerFirst(notable.title)}.`);
+  if (notable && sentences.length < 3) sentences.push(`The path also shows: ${lowerFirst(notable.title)}.`);
   return sentences.slice(0, 3).join(" ");
 }
 
@@ -487,7 +483,7 @@ function nextActionFor(
   if (outcome === "VERIFIED_COMPLETE") {
     return "No usability issues were observed. Test the journey with participants before treating it as validated.";
   }
-  return "Review the journey timeline to see where the agent stopped.";
+  return "Review the journey section to see where the agent stopped.";
 }
 
 /* ------------------------------------------------------------------------ */
@@ -569,7 +565,7 @@ export function buildFallbackReport(session: TestSession, note: string): Usabili
     outcomeRationale: note,
     findings: [],
     summary:
-      "This session didn't finish, so no usability findings were produced. The journey timeline shows what the agent did before it stopped.",
+      "This session didn't finish, so no usability issues were analysed. The journey section shows what the agent did before it stopped.",
     methodNote: "Partial evidence only. The session did not finish, so no analysis was performed.",
   };
 }

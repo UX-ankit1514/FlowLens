@@ -27,7 +27,7 @@ page.on("console", (m) => {
 });
 page.on("pageerror", (e) => consoleErrors.push(`pageerror: ${e.message}`));
 
-await page.goto(baseUrl, { waitUntil: "networkidle" });
+await page.goto(`${baseUrl}/new`, { waitUntil: "networkidle" });
 const run = page.getByRole("button", { name: "Run usability test" });
 log("Run disabled before input:", await run.isDisabled());
 

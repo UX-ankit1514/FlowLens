@@ -3,7 +3,8 @@
 import styled from "styled-components";
 import { Box, Text } from "@razorpay/blade/components";
 import type { Theme } from "@razorpay/blade/components";
-import { formatDateTime } from "@/lib/presentation/labels";
+import { CHECKPOINT_VIEW, FINDING_KIND_VIEW, VERIFICATION_VIEW, formatDateTime } from "@/lib/presentation/labels";
+import { SEVERITY_ORDER, SEVERITY_VIEW, refName } from "@/lib/presentation/report-view";
 import type { EvidenceItem, TestSession, UsabilityReport } from "@/types";
 import { EvidenceImage } from "./EvidenceImage";
 import { PageLink } from "./FindingCard";
@@ -93,8 +94,8 @@ export function EvidenceSection({
     <Box display="flex" flexDirection="column" borderTopWidth="thin" borderTopColor="surface.border.gray.muted">
       {group(
         "setup",
-        "Test setup",
-        "Persona, goal and criteria as supplied",
+        "What you asked the agent to do",
+        "Persona, goal and criteria, as you wrote them",
         <Box display="flex" flexDirection="column" gap="spacing.4">
           <Field label="Website">
             <PageLink url={d.websiteUrl} />
@@ -122,8 +123,8 @@ export function EvidenceSection({
       )}
       {group(
         "agent-account",
-        "The agent's own account",
-        "Self-reported at the end of the run",
+        "The agent's summary",
+        "In its own words, at the end of the run",
         <Box display="flex" flexDirection="column" gap="spacing.4">
           <Field label="Outcome summary">
             <Text size="medium" wordBreak="break-word">
@@ -140,7 +141,7 @@ export function EvidenceSection({
       {group(
         "screenshots",
         "Screenshots",
-        `${screenshots.length} captured by TinyFish`,
+        `${screenshots.length} captured during the run`,
         screenshots.length === 0 ? (
           <Text size="small" color="surface.text.gray.muted">
             No screenshots were captured for this run.
@@ -151,7 +152,7 @@ export function EvidenceSection({
               <Box key={step.stepId} id={`evidence-${step.ref}`} display="flex" flexDirection="column" gap="spacing.2">
                 <EvidenceImage src={screenshotUrl(session.id, step.stepId)} refLabel={step.ref} action={step.action} />
                 <Text size="xsmall" color="surface.text.gray.subtle" truncateAfterLines={2}>
-                  {`${step.ref} ${step.action}`}
+                  {`${refName(step.ref)} · ${step.action}`}
                 </Text>
               </Box>
             ))}
@@ -160,8 +161,8 @@ export function EvidenceSection({
       )}
       {group(
         "agent-report",
-        "Agent's reported actions and obstacles",
-        `${agentItems.length} items`,
+        "Actions and obstacles the agent reported",
+        `${agentItems.length} ${agentItems.length === 1 ? "item" : "items"}`,
         agentItems.length === 0 ? (
           <Text size="small" color="surface.text.gray.muted">
             The agent didn&apos;t report any actions or obstacles.
@@ -195,8 +196,8 @@ export function EvidenceSection({
       )}
       {group(
         "events",
-        "Live events from TinyFish",
-        `${events.length} received`,
+        "Live event log",
+        `${events.length} events from TinyFish`,
         events.length === 0 ? (
           <Text size="small" color="surface.text.gray.muted">
             No live events were received for this session.
@@ -211,7 +212,7 @@ export function EvidenceSection({
       )}
       {group(
         "notes",
-        "Your observations",
+        "Your notes",
         `${session.notes.length} ${session.notes.length === 1 ? "note" : "notes"}`,
         session.notes.length === 0 ? (
           <Text size="small" color="surface.text.gray.muted">
@@ -221,7 +222,7 @@ export function EvidenceSection({
           <Box display="flex" flexDirection="column" gap="spacing.3">
             {session.notes.map((note) => (
               <Box key={note.id} id={`evidence-${note.ref}`} padding="spacing.4" borderRadius="medium" backgroundColor="surface.background.gray.moderate">
-                <Text size="small" color="surface.text.gray.muted">{`${note.ref} · Designer note · ${formatDateTime(note.createdAt)}`}</Text>
+                <Text size="small" color="surface.text.gray.muted">{`${refName(note.ref)} · ${formatDateTime(note.createdAt)}`}</Text>
                 <Text size="medium" wordBreak="break-word">
                   {note.text}
                 </Text>
@@ -232,25 +233,84 @@ export function EvidenceSection({
       )}
       {group(
         "about",
-        "About this report",
-        report.method === "AI_INTERPRETATION" ? "AI interpretation" : "Evidence summary",
-        <Box display="flex" flexDirection="column" gap="spacing.3">
-          <Text size="medium">{report.methodNote}</Text>
+        "How to read this report",
+        report.method === "AI_INTERPRETATION" ? "Analysed with AI" : "Analysed by FlowLens rules",
+        <ReadingGuide report={report} />,
+      )}
+      {group(
+        "raw",
+        "Raw data",
+        "The unchanged TinyFish result, for debugging",
+        <Pre tabIndex={0} aria-label="Raw TinyFish result JSON">
+          {JSON.stringify(session.rawResult ?? null, null, 2)}
+        </Pre>,
+      )}
+    </Box>
+  );
+}
+
+/** Legend for the report's ratings, plus the method and its limits. */
+function ReadingGuide({ report }: { report: UsabilityReport }) {
+  return (
+    <Box display="flex" flexDirection="column" gap="spacing.6">
+      <Field label="Who tested">
+        <Text size="medium">
+          An AI browser agent attempted your task on the live website, guided by your persona. It isn&apos;t a real person, so treat
+          issues as leads to confirm with participants, not as verdicts.
+        </Text>
+      </Field>
+      <Field label="Severity">
+        <Box display="flex" flexDirection="column" gap="spacing.2">
+          {SEVERITY_ORDER.map((s) => (
+            <Text key={s} size="small">{`${SEVERITY_VIEW[s].label}: ${SEVERITY_VIEW[s].rule}`}</Text>
+          ))}
+          <Text size="small" color="surface.text.gray.muted">
+            Set by a fixed rule from what the agent ran into. One session can&apos;t show how often real people would hit an issue.
+          </Text>
+        </Box>
+      </Field>
+      <Field label="Issue types">
+        <Box display="flex" flexDirection="column" gap="spacing.2">
+          {(["FUNCTIONAL_FAILURE", "USABILITY_HYPOTHESIS"] as const).map((k) => (
+            <Text key={k} size="small">{`${FINDING_KIND_VIEW[k].label}: ${FINDING_KIND_VIEW[k].description}`}</Text>
+          ))}
+        </Box>
+      </Field>
+      <Field label="Success criteria">
+        <Box display="flex" flexDirection="column" gap="spacing.2">
+          <Text size="small">
+            {`${CHECKPOINT_VIEW.PASSED.label}, ${CHECKPOINT_VIEW.FAILED.label.toLowerCase()}, ${CHECKPOINT_VIEW.BLOCKED.label.toLowerCase()} or ${CHECKPOINT_VIEW.NOT_VERIFIED.label.toLowerCase()}: what the agent reported for each criterion.`}
+          </Text>
+          <Text size="small">
+            {`How sure we are that a criterion was met: ${VERIFICATION_VIEW.CONFIRMED.label} (strongest), ${VERIFICATION_VIEW.CONSISTENT.label.toLowerCase()}, ${VERIFICATION_VIEW.AGENT_REPORTED.label.toLowerCase()}, ${VERIFICATION_VIEW.LIMITED.label.toLowerCase()} or ${VERIFICATION_VIEW.CONTRADICTED.label.toLowerCase()}.`}
+          </Text>
+        </Box>
+      </Field>
+      <Field label="Links">
+        <Text size="small">
+          Step, Criterion, Obstacle, Action and Note links open the item they refer to: a step in the journey, a success criterion, or something
+          the agent reported.
+        </Text>
+      </Field>
+      <Field label="How this report was made">
+        <Box display="flex" flexDirection="column" gap="spacing.2">
+          <Text size="small">{report.methodNote}</Text>
+          {report.journey.completenessNote ? (
+            <Text size="small" color="surface.text.gray.subtle">
+              {report.journey.completenessNote}
+            </Text>
+          ) : null}
+        </Box>
+      </Field>
+      <Field label="Limits of this test">
+        <Box display="flex" flexDirection="column" gap="spacing.2">
           {report.limitations.map((l, i) => (
             <Text key={i} size="small" color="surface.text.gray.subtle">
               {l}
             </Text>
           ))}
-        </Box>,
-      )}
-      {group(
-        "raw",
-        "Raw TinyFish result",
-        "Preserved unchanged",
-        <Pre tabIndex={0} aria-label="Raw TinyFish result JSON">
-          {JSON.stringify(session.rawResult ?? null, null, 2)}
-        </Pre>,
-      )}
+        </Box>
+      </Field>
     </Box>
   );
 }
@@ -271,14 +331,14 @@ function EvidenceRow({ item }: { item: EvidenceItem }) {
     <Box
       id={`evidence-${item.ref}`}
       display="grid"
-      gridTemplateColumns="44px minmax(0, 1fr)"
+      gridTemplateColumns="96px minmax(0, 1fr)"
       gap="spacing.4"
       paddingY="spacing.4"
       borderBottomWidth="thin"
       borderBottomColor="surface.border.gray.muted"
     >
       <Text size="small" weight="semibold" color="surface.text.gray.subtle">
-        {item.ref}
+        {refName(item.ref)}
       </Text>
       <Box display="flex" flexDirection="column" gap="spacing.1" minWidth="0px">
         <Text size="medium" wordBreak="break-word">

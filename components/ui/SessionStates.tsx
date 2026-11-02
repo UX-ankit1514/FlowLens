@@ -9,7 +9,7 @@ export function SessionNotFound() {
         title="Session not found"
         description="FlowLens couldn't find this test. It may have been run with a different TinyFish key; connect that key to open it."
       >
-        <Button href="/">Start a new test</Button>
+        <Button href="/new">Start a new test</Button>
       </EmptyState>
     </Box>
   );

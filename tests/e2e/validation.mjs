@@ -11,7 +11,7 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const results = [];
 const check = (name, ok) => results.push(`${ok ? "PASS" : "FAIL"}  ${name}`);
 
-await page.goto(baseUrl, { waitUntil: "networkidle" });
+await page.goto(`${baseUrl}/new`, { waitUntil: "networkidle" });
 const run = page.getByRole("button", { name: "Run usability test" });
 
 // Required fields show inline errors after blur, and Run stays disabled.

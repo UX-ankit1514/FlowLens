@@ -50,30 +50,31 @@ export function sessionStatusView({ executionStatus, providerRunId, cancelReques
 }
 
 export const TASK_OUTCOME_VIEW: Record<TaskOutcome | LegacyTaskOutcome, { label: string; color: FeedbackColor; description: string }> = {
-  VERIFIED_COMPLETE: { label: "Verified complete", color: "positive", description: "Every criterion was met and confirmed in a screenshot." },
-  REPORTED_COMPLETE: { label: "Reported complete", color: "information", description: "The agent reported success; FlowLens couldn't confirm it independently." },
-  PARTIAL: { label: "Partially complete", color: "notice", description: "Some success criteria were met." },
-  NOT_COMPLETED: { label: "Not completed", color: "negative", description: "No success criteria were met." },
-  BLOCKED: { label: "Blocked", color: "neutral", description: "The test environment stopped the agent." },
-  NOT_VERIFIED: { label: "Not verified", color: "neutral", description: "There isn't enough evidence to judge the task." },
+  VERIFIED_COMPLETE: { label: "Task completed", color: "positive", description: "Every success criterion was met and seen in a screenshot." },
+  REPORTED_COMPLETE: { label: "Completed, not confirmed", color: "information", description: "The agent says it met every criterion; the screenshots don't prove it yet." },
+  PARTIAL: { label: "Partly completed", color: "notice", description: "Some success criteria were met." },
+  NOT_COMPLETED: { label: "Not completed", color: "negative", description: "None of the success criteria were met." },
+  BLOCKED: { label: "Blocked by the test setup", color: "neutral", description: "Something in the test environment stopped the agent. This isn't a design verdict." },
+  NOT_VERIFIED: { label: "Can't tell", color: "neutral", description: "There isn't enough evidence to judge the task." },
   // Saved sessions from before report version 2.
-  COMPLETED: { label: "Reported complete", color: "information", description: "The agent reported success." },
-  INCONCLUSIVE: { label: "Not verified", color: "neutral", description: "There isn't enough evidence to judge the task." },
+  COMPLETED: { label: "Completed, not confirmed", color: "information", description: "The agent reported success." },
+  INCONCLUSIVE: { label: "Can't tell", color: "neutral", description: "There isn't enough evidence to judge the task." },
 };
 
 export const CHECKPOINT_VIEW: Record<CheckpointStatus, { label: string; color: FeedbackColor }> = {
-  PASSED: { label: "Passed", color: "positive" },
-  FAILED: { label: "Failed", color: "negative" },
+  PASSED: { label: "Met", color: "positive" },
+  FAILED: { label: "Not met", color: "negative" },
   BLOCKED: { label: "Blocked", color: "notice" },
-  NOT_VERIFIED: { label: "Not verified", color: "neutral" },
+  NOT_VERIFIED: { label: "Not checked", color: "neutral" },
 };
 
+/** How much a "met" criterion can be trusted, in plain language. */
 export const VERIFICATION_VIEW: Record<CheckpointVerification, { label: string; color: FeedbackColor }> = {
-  CONFIRMED: { label: "Confirmed in screenshot", color: "positive" },
-  CONSISTENT: { label: "Consistent with trace", color: "information" },
-  AGENT_REPORTED: { label: "Agent-reported only", color: "neutral" },
-  LIMITED: { label: "Limited by technical blocker", color: "notice" },
-  CONTRADICTED: { label: "Conflicting evidence", color: "negative" },
+  CONFIRMED: { label: "Seen in a screenshot", color: "positive" },
+  CONSISTENT: { label: "Supported by the steps", color: "information" },
+  AGENT_REPORTED: { label: "Agent's word only", color: "neutral" },
+  LIMITED: { label: "Test setup interfered", color: "notice" },
+  CONTRADICTED: { label: "Evidence disagrees", color: "negative" },
   NOT_APPLICABLE: { label: "", color: "neutral" },
 };
 
@@ -81,51 +82,51 @@ export const CHECKPOINT_VERIFICATION_VIEW = VERIFICATION_VIEW;
 
 export const FINDING_KIND_VIEW: Record<FindingKind, { label: string; plural: string; color: FeedbackColor; description: string }> = {
   FUNCTIONAL_FAILURE: {
-    label: "Functional failure",
-    plural: "Functional failures",
+    label: "Something broke",
+    plural: "Things that broke",
     color: "negative",
-    description: "Something observably failed or did not work.",
+    description: "A page, control or action didn't work.",
   },
   USABILITY_HYPOTHESIS: {
-    label: "Usability hypothesis",
-    plural: "Usability hypotheses",
+    label: "Possible usability issue",
+    plural: "Possible usability issues",
     color: "notice",
-    description: "A design issue to investigate, supported by this recorded journey.",
+    description: "Likely friction in the design, to confirm with real people.",
   },
 };
 
 export const FINDING_KIND_ORDER: FindingKind[] = ["FUNCTIONAL_FAILURE", "USABILITY_HYPOTHESIS"];
 
 export function findingOriginLabel(origin: UXFinding["origin"]): string {
-  return origin === "AI" ? "AI interpretation · evidence checked" : "Rule-based · evidence checked";
+  return origin === "AI" ? "Written by AI from the evidence" : "Found by FlowLens rules";
 }
 
 export const PATTERN_KIND_LABEL: Record<JourneyPatternKind, string> = {
-  REPEATED_ACTION: "Repeated action",
-  BACKTRACKING: "Backtracking",
-  ROUTE_CHANGE: "Route change",
-  DEAD_END: "Dead end",
-  INFORMATION_NOT_FOUND: "Information not found",
-  CONFUSING_NAVIGATION: "Confusing navigation",
+  REPEATED_ACTION: "Repeated an action",
+  BACKTRACKING: "Went back",
+  ROUTE_CHANGE: "Changed route",
+  DEAD_END: "Hit a dead end",
+  INFORMATION_NOT_FOUND: "Couldn't find information",
+  CONFUSING_NAVIGATION: "Unclear where to go",
   UNNECESSARY_STEPS: "Extra steps",
-  INCOMPLETE_TASK: "Incomplete task",
+  INCOMPLETE_TASK: "Task not finished",
 };
 
 export const FLAG_VIEW: Record<StepFlagKind, { label: string; color: FeedbackColor }> = {
-  RETRY: { label: "Retry", color: "notice" },
-  REPEAT: { label: "Repeat", color: "notice" },
-  BACKTRACK: { label: "Went back", color: "neutral" },
+  RETRY: { label: "Tried again", color: "notice" },
+  REPEAT: { label: "Repeated", color: "notice" },
+  BACKTRACK: { label: "Went back", color: "notice" },
   ERROR: { label: "Error", color: "negative" },
-  TECHNICAL: { label: "Technical", color: "information" },
+  TECHNICAL: { label: "Test setup", color: "information" },
   INTERRUPTION: { label: "Pop-up", color: "neutral" },
-  DIRECT_URL: { label: "By URL", color: "neutral" },
-  WAIT: { label: "Wait", color: "neutral" },
+  DIRECT_URL: { label: "Typed address", color: "neutral" },
+  WAIT: { label: "Waited", color: "neutral" },
 };
 
 export const VALIDATION_VIEW: Record<HumanValidationStatus, { label: string; color: FeedbackColor }> = {
-  NOT_TESTED: { label: "Not tested", color: "neutral" },
-  OBSERVED: { label: "Observed with participants", color: "positive" },
-  NOT_OBSERVED: { label: "Not observed with participants", color: "notice" },
+  NOT_TESTED: { label: "Not checked with people yet", color: "neutral" },
+  OBSERVED: { label: "Seen with real users", color: "positive" },
+  NOT_OBSERVED: { label: "Not seen with real users", color: "notice" },
 };
 
 export function formatElapsed(ms: number): string {

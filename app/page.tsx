@@ -1,11 +1,7 @@
-import { AppShell } from "@/components/ui/AppShell";
-import { TestSetup } from "@/components/test-setup/TestSetup";
+import { Hero } from "@/components/landing/Hero";
+import { JourneyArt } from "@/components/landing/JourneyArt";
 
-export default async function SetupPage({ searchParams }: PageProps<"/">) {
-  const { from } = await searchParams;
-  return (
-    <AppShell>
-      <TestSetup fromSessionId={typeof from === "string" ? from : undefined} />
-    </AppShell>
-  );
+/** The first page people land on. "Start a test" opens the setup form at /new. */
+export default function HomePage() {
+  return <Hero art={<JourneyArt />} />;
 }

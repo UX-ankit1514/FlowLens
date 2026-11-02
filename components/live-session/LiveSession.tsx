@@ -119,7 +119,7 @@ export function LiveSession({ id }: { id: string }) {
     <Box display="flex" flexDirection="column" gap="spacing.6">
       <Box display="flex" flexDirection="column" gap="spacing.4">
         <Box>
-          <Link href="/" icon={ArrowLeftIcon} size="small">
+          <Link href="/new" icon={ArrowLeftIcon} size="small">
             New test
           </Link>
         </Box>
@@ -187,7 +187,7 @@ export function LiveSession({ id }: { id: string }) {
               : session.error.message
           }
           actions={{
-            primary: { text: "Try again with the same setup", onClick: () => router.push(`/?from=${id}`) },
+            primary: { text: "Try again with the same setup", onClick: () => router.push(`/new?from=${id}`) },
             ...(session.error.helpUrl
               ? { secondary: { text: "Open help", href: session.error.helpUrl, target: "_blank", rel: "noopener noreferrer" } }
               : {}),

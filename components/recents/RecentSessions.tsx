@@ -32,7 +32,7 @@ export function RecentSessions({
               : "Reports saved privately on this Mac. Reopen any session to show its task, journey, evidence and full report—even after restarting FlowLens."}
           </Text>
         </Box>
-        <Button href="/">New test</Button>
+        <Button href="/new">New test</Button>
       </Box>
 
       <Box
@@ -77,7 +77,7 @@ export function RecentSessions({
                   : "Your next test will appear here as soon as it starts, and its complete report will remain available after the local server restarts."}
             </Text>
           </Box>
-          <Button href="/">Run your first saved test</Button>
+          <Button href="/new">Run your first saved test</Button>
         </Box>
       ) : (
         <Box display="grid" gridTemplateColumns={{ base: "minmax(0, 1fr)", l: "repeat(2, minmax(0, 1fr))" }} gap="spacing.5">
